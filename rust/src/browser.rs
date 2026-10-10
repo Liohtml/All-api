@@ -192,7 +192,9 @@ impl Browser {
             Some(a) => a,
             None => {
                 let (tx, rx) = oneshot::channel();
-                let created = self.cdp.send(None, "Target.createTarget", json!({ "url": "about:blank" })).await?;
+                // its own window: a second tab in a window is a background tab, hidden to its page (headless too),
+                // and a hidden page never goes hidden on unload, so what it sends then would be missed
+                let created = self.cdp.send(None, "Target.createTarget", json!({ "url": "about:blank", "newWindow": true })).await?;
                 let target_id = created.get("targetId").and_then(|t| t.as_str()).ok_or_else(|| anyhow!("no target id"))?.to_string();
                 let already = {
                     let mut inner = self.inner.lock().unwrap();
@@ -458,7 +460,7 @@ impl Page {
             }
             bail!("page.goto: {err} at {url}");
         }
-        let loader = r.get("loaderId").and_then(|l| l.as_str()).unwrap_or("").to_string();
+        let mut loader = r.get("loaderId").and_then(|l| l.as_str()).unwrap_or("").to_string();
         let frame = self.main_frame();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -473,6 +475,11 @@ impl Page {
                 let name = ev.params.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let f = ev.params.get("frameId").and_then(|n| n.as_str()).unwrap_or("");
                 let l = ev.params.get("loaderId").and_then(|n| n.as_str()).unwrap_or("");
+                // A document a script replaces before it has loaded (a challenge's location.replace) never
+                // fires its own DOMContentLoaded: the one that replaces it is the page that loaded.
+                if name == "init" && f == frame && !loader.is_empty() && !l.is_empty() && l != loader {
+                    loader = l.to_string();
+                }
                 if (name == "DOMContentLoaded" || name == "load") && f == frame && (loader.is_empty() || l == loader) {
                     return Ok(());
                 }
@@ -1568,10 +1575,18 @@ async fn close_pages(run: &Arc<Run>) -> bool {
                 emptied.insert(p.target_id.clone());
                 // A round trip through the new document, then through the browser: whatever the old
                 // one sent as it unloaded has been paused and failed before either returns.
-                // The new document commits before the old one has unloaded (its pagehide handlers run
-                // after, and may be slow): a beacon of our own, sent last from pagehide, says when the old
-                // document is through. It never leaves the browser.
-                let marked = within(p.evaluate(&format!("addEventListener('pagehide', () => {{ try {{ navigator.sendBeacon(new URL({}, location.href).href, '') }} catch (e) {{}} }}), 1", json!(SEAL_MARK))), SEAL_MS).await.is_some();
+                // The new document commits before the old one has unloaded (its pagehide and
+                // visibilitychange handlers run after, and may be slow): a beacon of our own, sent last as
+                // the old document goes hidden (after pagehide), says when it is through. It never leaves the browser.
+                let marked = within(
+                    p.evaluate(&format!(
+                        "(() => {{ const mark = () => {{ if (document.visibilityState !== 'hidden') return; try {{ navigator.sendBeacon(new URL({}, location.href).href, '') }} catch (e) {{}} }}; addEventListener('pagehide', mark); addEventListener('visibilitychange', mark); return 1 }})()",
+                        json!(SEAL_MARK)
+                    )),
+                    SEAL_MS,
+                )
+                .await
+                .is_some();
                 if within(p.navigate("about:blank", None, Duration::from_millis(SEAL_MS)), SEAL_MS).await.is_some() {
                     let _ = within(p.evaluate("0"), SEAL_MS).await;
                 }

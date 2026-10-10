@@ -560,6 +560,10 @@ fn a_waf_interstitial_at_tier_1_is_not_drift_no_heal_is_logged_and_challenge_par
     }
     run(async {
         let fx = fx().await;
+        // The TypeScript suite runs this after the tier-3 test, whose Madrid run left the WAF cookie in
+        // the profile, so the add below learns from the real page; cargo orders tests by name, so that
+        // precondition is put back here.
+        api_anything::browser::add_cookies_to_profile(&[api_anything::types::StoredCookie::new("aws-waf-token", "ok", "127.0.0.1")], &profile_dir()).await.unwrap();
         add_operation(add(
             "hotels2",
             "search",
