@@ -658,9 +658,10 @@ fn a_page_whose_renderer_hangs_the_run_still_ends_and_the_browser_is_free_for_th
         let mut o = TriggerOptions::new(&format!("{}/stuck-page?name=stuck", fx.url), PROF.path());
         o.timeout_ms = Some(3000);
         o.intercept = Some(Arc::new(|e, acting, _| acting && e.request.method != "GET"));
-        let ended = match tokio::time::timeout(Duration::from_millis(45_000), run_trigger(o)).await {
-            Ok(Ok(r)) => data(&r, "stuck").is_some(),
-            Ok(Err(_)) => true,
+        // the run goes on past the race, as a promise does: a run that does not end is the failure
+        let ended = match tokio::time::timeout(Duration::from_millis(45_000), tokio::spawn(run_trigger(o))).await {
+            Ok(Ok(Ok(r))) => data(&r, "stuck").is_some(),
+            Ok(_) => true,
             Err(_) => false,
         };
         assert!(ended, "hung: after {} ms with timeoutMs 3000", t0.elapsed().as_millis());
@@ -829,6 +830,19 @@ fn once_the_user_has_signed_in_that_tier_3_read_answers_the_logged_out_run_must_
         assert_eq!(logged_out.class, api_anything::classify::Class::Auth, "{}", j(&logged_out));
         // what `api-anything login` leaves behind
         add_cookies_to_profile(&[StoredCookie::new("sid", "signed-in-session-1234", "127.0.0.1")], &profile_dir()).await.unwrap();
+        {
+            let _h = hold();
+            let b = open_browser(&profile_dir(), true).await.unwrap();
+            eprintln!("DEBUG cookies after add: {:?}", b.all_cookies().await.unwrap());
+            let p = b.new_page(None).await.unwrap();
+            let r = p.send("Storage.setCookies", json!({ "cookies": [{ "name": "sid2", "value": "v", "domain": "127.0.0.1", "path": "/" }] })).await;
+            eprintln!("DEBUG setCookies domain only: {r:?} -> {:?}", b.all_cookies().await.unwrap());
+            let r = p.send("Storage.setCookies", json!({ "cookies": [{ "name": "sid3", "value": "v", "url": "http://127.0.0.1/", "path": "/" }] })).await;
+            eprintln!("DEBUG setCookies url: {r:?} -> {:?}", b.all_cookies().await.unwrap());
+            let r = p.send("Network.setCookie", json!({ "name": "sid4", "value": "v", "domain": "127.0.0.1", "path": "/" })).await;
+            eprintln!("DEBUG Network.setCookie domain: {r:?} -> {:?}", b.all_cookies().await.unwrap());
+            let _ = p.close().await;
+        }
         let r = call("edge", "members", args(json!({ "name": "zed" })), fast()).await;
         assert!(r.ok, "{}; stale={:?}", j(&r), stale_mark("edge", "members", now_ms()));
         assert_eq!(r.data, Some(json!({ "name": "zed", "followers": 300 })));
@@ -1525,7 +1539,7 @@ fn a_cli_capture_exits_cleanly_and_leaves_no_chrome_behind() {
         close_browser().await;
         write_spec(fx, two_process_ops(fx), "edge");
         let r = cli(&["capture", &format!("{}/data-page?name=cli", fx.url)]).await;
-        assert_eq!(r.code, Some(0), "{}", r.stderr);
+        assert_eq!(r.code, Some(0), "{}{}", r.stdout, r.stderr);
         assert!(until(|| chromes() == 0, 3000).await, "Chrome processes left on the profile");
     });
 }
@@ -1569,7 +1583,7 @@ fn sigkill_mid_capture_leaves_no_chrome_behind_and_the_next_run_can_launch_on_th
         running.wait(Some(30_000)).await;
         assert!(until(|| chromes() == 0, 5000).await, "orphaned Chrome processes on the profile");
         let next = cli(&["capture", &format!("{}/data-page?name=after", fx.url)]).await;
-        assert_eq!(next.code, Some(0), "{}", next.stdout.chars().take(300).collect::<String>());
+        assert_eq!(next.code, Some(0), "{}{}", next.stdout.chars().take(300).collect::<String>(), next.stderr);
     });
 }
 

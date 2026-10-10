@@ -6,7 +6,6 @@ use common::Home;
 use common::fixture::{Fixture, PUBLIC_BEARER};
 use regex::Regex;
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// One runtime for the whole binary, like node's one event loop: the shared Chrome belongs to the
@@ -44,20 +43,68 @@ static FX: LazyLock<Fixture> = LazyLock::new(|| {
 });
 static PROFILE: LazyLock<tempfile::TempDir> = LazyLock::new(|| tempfile::tempdir().unwrap());
 
-/// The browser tests run one at a time, in file order (the t<n> prefix keeps the harness's name order
-/// the file's): one shared Chrome, and later tests use what earlier ones captured.
-static STAGE: AtomicUsize = AtomicUsize::new(0);
+/// The tests run in file order, one at a time: each waits for the earlier ones the harness was
+/// asked to run (its filters are this binary's arguments), so one test can also be run by itself.
+const ORDER: &[&str] = &[
+    "t1_run_trigger_captures_the_graph_ql_read_with_wire_headers_and_bodies",
+    "t2_soft_from_reaches_the_target_by_an_in_page_navigation",
+    "t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_history_popstate",
+    "t4_write_interception_covers_service_workers_and_gets_sent_by_a_ui_action",
+    "t5_intercept_aborts_the_write_before_it_reaches_the_server",
+    "t6_layered_form_encoding_and_per_request_signatures_come_through",
+    "t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies",
+    "t8_the_headless_user_agent_is_asked_of_chrome_once_per_installed_chrome_then_read_from_disk",
+];
+static DONE: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+fn selected(name: &str) -> bool {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let exact = args.iter().any(|a| a == "--exact");
+    let (mut filters, mut skips) = (vec![], vec![]);
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "--skip" => {
+                skips.extend(args.get(i + 1).cloned());
+                i += 2;
+            }
+            "--test-threads" | "--logfile" | "--color" | "--format" | "-Z" | "--shuffle-seed" => i += 2,
+            _ => {
+                if !a.starts_with('-') {
+                    filters.push(a.to_string());
+                }
+                i += 1;
+            }
+        }
+    }
+    let hit = |f: &String| if exact { name == f } else { name.contains(f.as_str()) };
+    (filters.is_empty() || filters.iter().any(hit)) && !skips.iter().any(hit)
+}
+
 struct Turn(usize);
 impl Drop for Turn {
     fn drop(&mut self) {
-        STAGE.store(self.0, Ordering::SeqCst);
+        let mut d = DONE.lock().unwrap();
+        if d.len() < ORDER.len() {
+            d.resize(ORDER.len(), false);
+        }
+        d[self.0] = true;
     }
 }
-async fn turn(n: usize) -> Turn {
-    while STAGE.load(Ordering::SeqCst) != n - 1 {
+
+async fn turn(name: &str) -> Turn {
+    let idx = ORDER.iter().position(|n| *n == name).expect("a test named in ORDER");
+    loop {
+        let waiting = {
+            let d = DONE.lock().unwrap();
+            (0..idx).any(|j| selected(ORDER[j]) && !d.get(j).copied().unwrap_or(false))
+        };
+        if !waiting {
+            return Turn(idx);
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    Turn(n)
 }
 
 static GQL_URL: Mutex<String> = Mutex::new(String::new());
@@ -121,7 +168,7 @@ fn login_wall_rate_limit_html_list() {
 #[test]
 fn t1_run_trigger_captures_the_graph_ql_read_with_wire_headers_and_bodies() {
     RT.block_on(async {
-        let _t = turn(1).await;
+        let _t = turn("t1_run_trigger_captures_the_graph_ql_read_with_wire_headers_and_bodies").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -151,7 +198,7 @@ fn t1_run_trigger_captures_the_graph_ql_read_with_wire_headers_and_bodies() {
 #[test]
 fn t2_soft_from_reaches_the_target_by_an_in_page_navigation() {
     RT.block_on(async {
-        let _t = turn(2).await;
+        let _t = turn("t2_soft_from_reaches_the_target_by_an_in_page_navigation").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -170,7 +217,7 @@ fn t2_soft_from_reaches_the_target_by_an_in_page_navigation() {
 #[test]
 fn t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_history_popstate() {
     RT.block_on(async {
-        let _t = turn(3).await;
+        let _t = turn("t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_history_popstate").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -191,7 +238,7 @@ fn t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_
 #[test]
 fn t4_write_interception_covers_service_workers_and_gets_sent_by_a_ui_action() {
     RT.block_on(async {
-        let _t = turn(4).await;
+        let _t = turn("t4_write_interception_covers_service_workers_and_gets_sent_by_a_ui_action").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -219,7 +266,7 @@ fn t4_write_interception_covers_service_workers_and_gets_sent_by_a_ui_action() {
 #[test]
 fn t5_intercept_aborts_the_write_before_it_reaches_the_server() {
     RT.block_on(async {
-        let _t = turn(5).await;
+        let _t = turn("t5_intercept_aborts_the_write_before_it_reaches_the_server").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -247,7 +294,7 @@ fn t5_intercept_aborts_the_write_before_it_reaches_the_server() {
 #[test]
 fn t6_layered_form_encoding_and_per_request_signatures_come_through() {
     RT.block_on(async {
-        let _t = turn(6).await;
+        let _t = turn("t6_layered_form_encoding_and_per_request_signatures_come_through").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -288,7 +335,7 @@ fn t6_layered_form_encoding_and_per_request_signatures_come_through() {
 #[test]
 fn t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies() {
     RT.block_on(async {
-        let _t = turn(7).await;
+        let _t = turn("t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;
@@ -328,7 +375,7 @@ fn t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies() {
 #[test]
 fn t8_the_headless_user_agent_is_asked_of_chrome_once_per_installed_chrome_then_read_from_disk() {
     RT.block_on(async {
-        let _t = turn(8).await;
+        let _t = turn("t8_the_headless_user_agent_is_asked_of_chrome_once_per_installed_chrome_then_read_from_disk").await;
         if !chrome() {
             eprintln!("Google Chrome not installed: skipped");
             return;

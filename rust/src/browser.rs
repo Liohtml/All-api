@@ -62,6 +62,8 @@ pub struct Browser {
     /// the headless build's user agent with HeadlessChrome replaced
     user_agent: Option<String>,
     inner: Mutex<BrowserInner>,
+    /// one caller at a time between asking for a page and taking it, so two never take the same target
+    creating: tokio::sync::Mutex<()>,
 }
 
 impl Browser {
@@ -166,6 +168,7 @@ impl Browser {
 
     /// A fresh page (about:blank), set up for capture. `run`: the run that owns it, so its popups go there too.
     pub async fn new_page(self: &Arc<Self>, run: Option<u64>) -> Result<Arc<Page>> {
+        let _one = self.creating.lock().await;
         let reuse = {
             let mut inner = self.inner.lock().unwrap();
             let idx = inner.unclaimed.iter().position(|t| inner.attached.get(t).map(|a| a.url == "about:blank" || a.url.is_empty()).unwrap_or(false));
@@ -197,8 +200,11 @@ impl Browser {
         if let Some(r) = run {
             self.inner.lock().unwrap().owners.insert(at.target_id.clone(), r);
         }
-        let page = Arc::new(Page { browser: self.clone(), target_id: at.target_id.clone(), session_id: at.session_id.clone(), main_frame: Mutex::new(String::new()), closed: AtomicBool::new(false) });
+        let page = new_page_on(self, &at);
         page.setup().await?;
+        // A target this process created attaches paused (waitForDebuggerOnStart) and a navigation on it
+        // never starts its request; a reused tab was let go on attach, and letting it go again is a no-op.
+        page.resume().await;
         Ok(page)
     }
 
@@ -216,10 +222,9 @@ impl Browser {
     }
 
     /// A page for a popup the browser announced, set up like any other.
-    pub async fn adopt(self: &Arc<Self>, at: &Attached) -> Result<Arc<Page>> {
-        let page = Arc::new(Page { browser: self.clone(), target_id: at.target_id.clone(), session_id: at.session_id.clone(), main_frame: Mutex::new(String::new()), closed: AtomicBool::new(false) });
-        page.setup().await?;
-        Ok(page)
+    pub fn adopt(self: &Arc<Self>, at: &Attached) -> Arc<Page> {
+        // still held before its first navigation: the run covers it (`cover_popup`) and then resumes it
+        new_page_on(self, at)
     }
 
     /// Open tabs a run's pages opened (through closed ones too) that are not among `held`.
@@ -309,6 +314,27 @@ pub struct Page {
     pub session_id: String,
     main_frame: Mutex<String>,
     closed: AtomicBool,
+    /// every request the page sent since it was opened, by request id: (method, url, body), so a
+    /// fetch can tell the redirect of a request the page itself sent earlier from its own
+    requests: Mutex<HashMap<String, (String, String, Option<String>)>>,
+}
+
+/// A page on an attached target, recording its requests from the start.
+fn new_page_on(browser: &Arc<Browser>, at: &Attached) -> Arc<Page> {
+    let page = Arc::new(Page { browser: browser.clone(), target_id: at.target_id.clone(), session_id: at.session_id.clone(), main_frame: Mutex::new(String::new()), closed: AtomicBool::new(false), requests: Mutex::new(HashMap::new()) });
+    let mut rx = page.events();
+    let weak = Arc::downgrade(&page);
+    tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            let Some(page) = weak.upgrade() else { break };
+            if ev.method == "Network.requestWillBeSent" {
+                let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
+                let req = ev.params.get("request").cloned().unwrap_or(Value::Null);
+                page.requests.lock().unwrap().insert(rid, (req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string())));
+            }
+        }
+    });
+    page
 }
 
 impl Page {
@@ -324,21 +350,58 @@ impl Page {
         self.main_frame.lock().unwrap().clone()
     }
 
-    async fn setup(&self) -> Result<()> {
-        self.send("Page.enable", json!({})).await?;
-        self.send("Page.setLifecycleEventsEnabled", json!({ "enabled": true })).await?;
-        self.send("Network.enable", json!({ "maxPostDataSize": 16 * 1024 * 1024 })).await?;
-        // A service worker's fetches bypass interception and hide requests from capture.
-        let _ = self.send("Network.setBypassServiceWorker", json!({ "bypass": true })).await;
-        self.send("Runtime.enable", json!({})).await?;
+    /// What a page of a run has enabled: (method, params, required).
+    fn enables(&self) -> Vec<(&'static str, Value, bool)> {
+        let mut v = vec![
+            ("Page.enable", json!({}), true),
+            ("Page.setLifecycleEventsEnabled", json!({ "enabled": true }), true),
+            ("Network.enable", json!({ "maxPostDataSize": 16 * 1024 * 1024 }), true),
+            // A service worker's fetches bypass interception and hide requests from capture.
+            ("Network.setBypassServiceWorker", json!({ "bypass": true }), false),
+            ("Runtime.enable", json!({}), true),
+        ];
         if let Some(ua) = &self.browser.user_agent {
-            let _ = self.send("Emulation.setUserAgentOverride", json!({ "userAgent": ua })).await;
+            v.push(("Emulation.setUserAgentOverride", json!({ "userAgent": ua }), false));
         }
+        v
+    }
+
+    async fn setup(&self) -> Result<()> {
+        for (method, params, required) in self.enables() {
+            let r = self.send(method, params).await;
+            if required {
+                r?;
+            }
+        }
+        self.read_frame_tree().await
+    }
+
+    async fn read_frame_tree(&self) -> Result<()> {
         let tree = self.send("Page.getFrameTree", json!({})).await?;
         if let Some(id) = tree.pointer("/frameTree/frame/id").and_then(|v| v.as_str()) {
             *self.main_frame.lock().unwrap() = id.to_string();
         }
         Ok(())
+    }
+
+    /// A popup is held before its first navigation, and its renderer answers nothing until it is
+    /// resumed; the browser's half of each enable applies as soon as it is sent. So the enables are
+    /// sent now and answered later (`finish_setup`, once the page runs).
+    fn setup_in_background(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<Result<Value>>> {
+        self.enables()
+            .into_iter()
+            .map(|(method, params, _)| {
+                let me = self.clone();
+                tokio::spawn(async move { me.send(method, params).await })
+            })
+            .collect()
+    }
+
+    async fn finish_setup(&self, pending: Vec<tokio::task::JoinHandle<Result<Value>>>) -> Result<()> {
+        for p in pending {
+            let _ = tokio::time::timeout(Duration::from_millis(10_000), p).await;
+        }
+        self.read_frame_tree().await
     }
 
     /// Let a page that was paused at its first navigation go.
@@ -400,9 +463,10 @@ impl Page {
         Ok(r.pointer("/result/value").cloned().unwrap_or(Value::Null))
     }
 
+    /// Where the page is; a renderer that does not answer (hung) is given a few seconds, then the browser's word is taken.
     pub async fn url(&self) -> String {
-        match self.evaluate("location.href").await {
-            Ok(Value::String(s)) => s,
+        match tokio::time::timeout(Duration::from_millis(5000), self.evaluate("location.href")).await {
+            Ok(Ok(Value::String(s))) => s,
             _ => self.browser.inner.lock().unwrap().attached.get(&self.target_id).map(|a| a.url.clone()).unwrap_or_default(),
         }
     }
@@ -560,6 +624,7 @@ pub async fn open_browser(profile_dir: &Path, headless: bool) -> Result<Arc<Brow
         headless,
         user_agent,
         inner: Mutex::new(BrowserInner::default()),
+        creating: tokio::sync::Mutex::new(()),
     });
     browser.watch();
     cdp.send(None, "Target.setDiscoverTargets", json!({ "discover": true })).await?;
@@ -716,8 +781,14 @@ struct Cap {
     extra_req_applied: HashMap<String, usize>,
     extra_req_stash: HashMap<String, Vec<Headers>>,
     extra_res_stash: HashMap<String, Headers>,
-    /// network ids the guard aborted before their request was reported
-    aborted_ids: HashSet<String>,
+    /// requests the guard stopped before the network reported them, by network id: recorded from the
+    /// pause itself (a popup's first navigation, a beacon a leaving page sends), filled in if the report comes
+    aborted_ids: HashMap<String, usize>,
+    /// chains whose redirect hop the guard stopped, by network id: the page is told nothing of that
+    /// redirect, its status included, so the chain's first request keeps no response
+    stopped_hops: HashSet<String>,
+    /// the request each chain of redirects started from, by network id, as it was paused
+    chains: HashMap<String, Exchange>,
     pending: HashMap<String, f64>,
     hits: HashMap<String, u32>,
     last_activity: f64,
@@ -856,14 +927,20 @@ impl Run {
         // a write a page sends as it leaves can be learned, the rest of a closing page's traffic is noise.
         if stop {
             let mut cap = self.cap.lock().unwrap();
+            if let (true, Some(n)) = (via.is_some(), network_id.as_ref()) {
+                cap.stopped_hops.insert(n.clone());
+                if let Some(&first) = cap.hops.get(n).and_then(|h| h.first()) {
+                    cap.exchanges[first].response = None;
+                }
+            }
             match network_id.as_ref().and_then(|n| cap.by_req.get(n).copied()) {
                 Some(idx) => cap.exchanges[idx].aborted = true,
                 None => {
+                    let id = cap.exchanges.len() as u64 + 1;
+                    cap.exchanges.push(Exchange { id, aborted: true, ..ex });
                     if let Some(n) = &network_id {
-                        cap.aborted_ids.insert(n.clone());
-                    } else {
-                        let id = cap.exchanges.len() as u64 + 1;
-                        cap.exchanges.push(Exchange { id, aborted: true, ..ex });
+                        let idx = cap.exchanges.len() - 1;
+                        cap.aborted_ids.insert(n.clone(), idx);
                     }
                 }
             }
@@ -873,15 +950,43 @@ impl Run {
 }
 
 /// Attach the guard to a page: the WebSocket drop script and request interception.
+const WS_DROP: &str = "(()=>{try{WebSocket.prototype.send=function(){};}catch(e){}})()";
+
+/// Whether the guard drops WebSocket messages: a chat "send" goes over an open socket, where no HTTP interception sees it.
+fn drops_sockets(run: &Run) -> bool {
+    let Some(intercept) = &run.intercept else { return false };
+    let probe = Exchange { id: 0, resource_type: "websocket".into(), request: Hop { method: "SEND".into(), url: String::new(), headers: Headers::new(), body: None }, response: None, aborted: false };
+    intercept(&probe, false, None) && intercept(&probe, true, None)
+}
+
 async fn cover(run: &Arc<Run>, page: &Arc<Page>) -> Result<()> {
-    if let Some(intercept) = &run.intercept {
-        let probe = Exchange { id: 0, resource_type: "websocket".into(), request: Hop { method: "SEND".into(), url: String::new(), headers: Headers::new(), body: None }, response: None, aborted: false };
-        if intercept(&probe, false, None) && intercept(&probe, true, None) {
-            // A chat "send" goes over an open socket, where no HTTP interception sees it.
-            let _ = page.send("Page.addScriptToEvaluateOnNewDocument", json!({ "source": "(()=>{try{WebSocket.prototype.send=function(){};}catch(e){}})();" })).await;
-            let _ = page.evaluate("(()=>{try{WebSocket.prototype.send=function(){};}catch(e){}})()").await;
+    if run.intercept.is_some() {
+        if drops_sockets(run) {
+            let _ = page.send("Page.addScriptToEvaluateOnNewDocument", json!({ "source": WS_DROP })).await;
+            let _ = page.evaluate(WS_DROP).await;
         }
         page.send("Fetch.enable", json!({ "patterns": [{ "urlPattern": "*" }] })).await?;
+    }
+    Ok(())
+}
+
+/// A popup is covered while the browser still holds its first navigation: request interception is
+/// the browser's and answers at once, the socket script is queued for its first document, and the
+/// enables are left pending until the page runs. Then it is resumed, and watched from before that.
+async fn cover_popup(run: &Arc<Run>, page: &Arc<Page>) -> Result<()> {
+    let pending = page.setup_in_background();
+    if run.intercept.is_some() {
+        page.send("Fetch.enable", json!({ "patterns": [{ "urlPattern": "*" }] })).await?;
+        if drops_sockets(run) {
+            let p = page.clone();
+            tokio::spawn(async move { p.send("Page.addScriptToEvaluateOnNewDocument", json!({ "source": WS_DROP })).await });
+        }
+    }
+    watch_page(run.clone(), page.clone(), false);
+    page.resume().await;
+    page.finish_setup(pending).await?;
+    if drops_sockets(run) {
+        let _ = page.evaluate(WS_DROP).await;
     }
     Ok(())
 }
@@ -943,7 +1048,7 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                     let mut cap = run.cap.lock().unwrap();
                     if let Some(redirect) = p.get("redirectResponse") {
                         if let Some(&idx) = cap.by_req.get(&rid) {
-                            if cap.exchanges[idx].response.is_none() {
+                            if cap.exchanges[idx].response.is_none() && !cap.stopped_hops.contains(&rid) {
                                 let headers = lower_headers(redirect.get("headers"));
                                 let ct = headers.get("content-type").cloned().unwrap_or_default();
                                 cap.exchanges[idx].response = Some(ExchangeResponse { status: redirect.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16, headers, body: None, content_type: ct });
@@ -955,10 +1060,21 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                     let encoding = headers.get("content-encoding").cloned().unwrap_or_default();
                     let body = decode_post(req.get("postDataEntries"), &encoding, req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()));
                     let kind = resource_type(p.get("type"));
-                    let id = cap.exchanges.len() as u64 + 1;
-                    let aborted = cap.aborted_ids.remove(&rid);
-                    cap.exchanges.push(Exchange { id, resource_type: kind.clone(), request: Hop { method: req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), url: url.clone(), headers, body }, response: None, aborted });
-                    let idx = cap.exchanges.len() - 1;
+                    let request = Hop { method: req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), url: url.clone(), headers, body };
+                    let idx = match cap.aborted_ids.remove(&rid) {
+                        // the guard recorded it from the pause: this is the same request, fully reported
+                        Some(idx) => {
+                            let e = &mut cap.exchanges[idx];
+                            e.resource_type = kind.clone();
+                            e.request = request;
+                            idx
+                        }
+                        None => {
+                            let id = cap.exchanges.len() as u64 + 1;
+                            cap.exchanges.push(Exchange { id, resource_type: kind.clone(), request, response: None, aborted: false });
+                            cap.exchanges.len() - 1
+                        }
+                    };
                     cap.by_req.insert(rid.clone(), idx);
                     cap.hops.entry(rid.clone()).or_default().push(idx);
                     // headers as sent on the wire (cookie included) may have been reported already
@@ -1120,13 +1236,20 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                     };
                     let fetch_id = rid.clone();
                     let network_id = p.get("networkId").and_then(|n| n.as_str()).map(|s| s.to_string());
-                    // A hop goes on under its request's network id: the chain's first request is `via`.
+                    // A hop goes on under its request's network id. Chrome marks it with redirectedRequestId, but
+                    // not a cross-origin fetch's: the id seen paused before is what tells it.
                     let via = {
-                        let cap = run.cap.lock().unwrap();
-                        network_id.as_ref().and_then(|n| cap.hops.get(n)).and_then(|h| h.first()).map(|&i| cap.exchanges[i].clone()).filter(|_| p.get("redirectedRequestId").is_some() || {
-                            let cap = &cap;
-                            network_id.as_ref().and_then(|n| cap.hops.get(n)).map(|h| h.len() > 1).unwrap_or(false)
-                        })
+                        let mut cap = run.cap.lock().unwrap();
+                        match &network_id {
+                            Some(n) => match cap.chains.get(n) {
+                                Some(first) => Some(first.clone()),
+                                None => {
+                                    cap.chains.insert(n.clone(), ex.clone());
+                                    None
+                                }
+                            },
+                            None => None,
+                        }
                     };
                     run.cap.lock().unwrap().deciding += 1;
                     let run2 = run.clone();
@@ -1203,11 +1326,10 @@ pub async fn run_trigger(o: TriggerOptions) -> Result<CaptureResult> {
     let popup_run = run.clone();
     let popup_task = tokio::spawn(async move {
         while let Some(at) = popups.recv().await {
-            if let Ok(p) = popup_run.browser.adopt(&at).await {
-                popup_run.pages.lock().unwrap().push(p.clone());
-                popup_run.held.lock().unwrap().insert(p.target_id.clone());
-                let _ = cover(&popup_run, &p).await;
-                watch_page(popup_run.clone(), p.clone(), false);
+            let p = popup_run.browser.adopt(&at);
+            popup_run.pages.lock().unwrap().push(p.clone());
+            popup_run.held.lock().unwrap().insert(p.target_id.clone());
+            if cover_popup(&popup_run, &p).await.is_err() {
                 p.resume().await;
             }
         }
@@ -1418,7 +1540,17 @@ async fn redirect_of(seen: &Arc<Mutex<Vec<(String, String, Option<String>, u16, 
     while mine().is_empty() && tokio::time::Instant::now() < end {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let answers = mine();
+    // The page's own copy of the request is answered at the same moment: its redirect may be reported
+    // a few ms after the fetch resolved, so the answers are taken once no more arrive.
+    let mut answers = mine();
+    loop {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let now = mine();
+        if now.len() == answers.len() || tokio::time::Instant::now() >= end {
+            break;
+        }
+        answers = now;
+    }
     let distinct: HashSet<String> = answers.iter().map(|(s, h)| format!("{s} {}", h.get("location").cloned().unwrap_or_default())).collect();
     if distinct.len() != 1 {
         let why = if answers.is_empty() {
@@ -1437,15 +1569,18 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
     let seen: Arc<Mutex<Vec<(String, String, Option<String>, u16, Headers)>>> = Arc::new(Mutex::new(Vec::new()));
     let mut rx = page.events();
     let seen2 = seen.clone();
+    let page2 = page.clone();
     let watcher = tokio::spawn(async move {
         let mut requests: HashMap<String, (String, String, Option<String>)> = HashMap::new();
+        // a request the page sent before this fetch (its own copy of the same one) is in the page's record
+        let known = |requests: &HashMap<String, (String, String, Option<String>)>, rid: &str| requests.get(rid).cloned().or_else(|| page2.requests.lock().unwrap().get(rid).cloned());
         while let Some(ev) = rx.recv().await {
             let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
             match ev.method.as_str() {
                 "Network.requestWillBeSent" => {
                     let req = ev.params.get("request").cloned().unwrap_or(Value::Null);
                     if let Some(redirect) = ev.params.get("redirectResponse") {
-                        if let Some((m, u, b)) = requests.get(&rid).cloned() {
+                        if let Some((m, u, b)) = known(&requests, &rid) {
                             let status = redirect.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
                             if (300..400).contains(&status) {
                                 seen2.lock().unwrap().push((m, u, b, status, lower_headers(redirect.get("headers"))));
@@ -1458,7 +1593,7 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
                     let res = ev.params.get("response").cloned().unwrap_or(Value::Null);
                     let status = res.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
                     if (300..400).contains(&status) {
-                        if let Some((m, u, b)) = requests.get(&rid).cloned() {
+                        if let Some((m, u, b)) = known(&requests, &rid) {
                             seen2.lock().unwrap().push((m, u, b, status, lower_headers(res.get("headers"))));
                         }
                     }

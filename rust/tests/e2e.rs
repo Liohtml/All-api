@@ -15,12 +15,11 @@ use common::{Home, args, j};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 /// One runtime for the whole binary, like node's one event loop: the shared Chrome belongs to the
 /// runtime that launched it, so every test runs on this one.
 static RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap());
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -52,19 +51,79 @@ static FX: LazyLock<Fixture> = LazyLock::new(|| {
     rx.recv().unwrap()
 });
 
-/// The tests build on one another in file order (node runs them so): one at a time, in turn.
-static STAGE: AtomicUsize = AtomicUsize::new(0);
+/// The tests run in file order, one at a time: each waits for the earlier ones the harness was
+/// asked to run (its filters are this binary's arguments), so one test can also be run by itself.
+const ORDER: &[&str] = &[
+    "t01_add_get_user_from_u_name_with_two_examples_call_it_for_a_new_name_at_tier_1",
+    "t02_after_rotate_the_call_heals_by_rescan_no_browser_and_logs_it",
+    "t02b_a_handle_that_doesnt_exist_is_input_the_example_still_answers_no_heal_no_browser",
+    "t03_heal_loop_guard_then_a_heal_by_recapture_when_rescan_cannot_work",
+    "t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_writes_exactly_once",
+    "t05_a_per_request_signature_pins_the_op_to_tier_3_which_answers_through_the_trigger",
+    "t06_a_login_wall_served_as_200_html_is_auth_with_a_login_hint",
+    "t07_a_rate_limit_is_reported_as_rate_with_no_heal_and_no_retry_via_the_cli",
+    "t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query",
+    "t09_the_html_recipe_on_a_server_rendered_list_returns_picked_items",
+    "t10_the_mcp_server_lists_3_meta_tools_calls_reads_and_hides_and_refuses_writes",
+    "t11_a_missing_session_value_clean_home_is_auth_one_trigger_run_refreshes_it_then_tier_1_works",
+    "t12_public_keeps_a_public_bearer_literal_works_with_no_session_values_and_export_allows_it",
+    "t13_a_write_sent_as_a_get_by_a_button_is_learned_without_being_sent_from_a_non_write_capture_is_refused",
+    "t14_ids_that_differ_per_page_load_but_replay_fine_are_session_scoped_min_tier_stays_1",
+    "t15_add_from_a_saved_run_re_learns_without_a_browser_templating_step_selectors",
+    "t16_a_site_that_walls_plain_http_answers_at_tier_2_and_the_result_says_why",
+    "t17_captures_next_hint_points_at_inspect_and_html_when_the_best_candidate_is_the_page_itself",
+    "t18_login_imports_the_session_from_the_browser_a_revoke_fresh_cookie_self_heals_by_re_import",
+];
+static DONE: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+fn selected(name: &str) -> bool {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let exact = args.iter().any(|a| a == "--exact");
+    let (mut filters, mut skips) = (vec![], vec![]);
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "--skip" => {
+                skips.extend(args.get(i + 1).cloned());
+                i += 2;
+            }
+            "--test-threads" | "--logfile" | "--color" | "--format" | "-Z" | "--shuffle-seed" => i += 2,
+            _ => {
+                if !a.starts_with('-') {
+                    filters.push(a.to_string());
+                }
+                i += 1;
+            }
+        }
+    }
+    let hit = |f: &String| if exact { name == f } else { name.contains(f.as_str()) };
+    (filters.is_empty() || filters.iter().any(hit)) && !skips.iter().any(hit)
+}
+
 struct Turn(usize);
 impl Drop for Turn {
     fn drop(&mut self) {
-        STAGE.store(self.0, Ordering::SeqCst);
+        let mut d = DONE.lock().unwrap();
+        if d.len() < ORDER.len() {
+            d.resize(ORDER.len(), false);
+        }
+        d[self.0] = true;
     }
 }
-async fn turn(n: usize) -> Turn {
-    while STAGE.load(Ordering::SeqCst) != n - 1 {
+
+async fn turn(name: &str) -> Turn {
+    let idx = ORDER.iter().position(|n| *n == name).expect("a test named in ORDER");
+    loop {
+        let waiting = {
+            let d = DONE.lock().unwrap();
+            (0..idx).any(|j| selected(ORDER[j]) && !d.get(j).copied().unwrap_or(false))
+        };
+        if !waiting {
+            return Turn(idx);
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    Turn(n)
 }
 
 fn fast() -> CallOptions {
@@ -179,7 +238,7 @@ fn make_chromium_db(profile_dir: &Path, rows: &[(&str, &str, &str)], password: &
 #[test]
 fn t01_add_get_user_from_u_name_with_two_examples_call_it_for_a_new_name_at_tier_1() {
     RT.block_on(async {
-        let _t = turn(1).await;
+        let _t = turn("t01_add_get_user_from_u_name_with_two_examples_call_it_for_a_new_name_at_tier_1").await;
         if !chrome() {
             return skip();
         }
@@ -205,7 +264,7 @@ fn t01_add_get_user_from_u_name_with_two_examples_call_it_for_a_new_name_at_tier
 #[test]
 fn t02_after_rotate_the_call_heals_by_rescan_no_browser_and_logs_it() {
     RT.block_on(async {
-        let _t = turn(2).await;
+        let _t = turn("t02_after_rotate_the_call_heals_by_rescan_no_browser_and_logs_it").await;
         if !chrome() {
             return skip();
         }
@@ -223,7 +282,7 @@ fn t02_after_rotate_the_call_heals_by_rescan_no_browser_and_logs_it() {
 #[test]
 fn t02b_a_handle_that_doesnt_exist_is_input_the_example_still_answers_no_heal_no_browser() {
     RT.block_on(async {
-        let _t = turn(3).await;
+        let _t = turn("t02b_a_handle_that_doesnt_exist_is_input_the_example_still_answers_no_heal_no_browser").await;
         if !chrome() {
             return skip();
         }
@@ -238,7 +297,7 @@ fn t02b_a_handle_that_doesnt_exist_is_input_the_example_still_answers_no_heal_no
 #[test]
 fn t03_heal_loop_guard_then_a_heal_by_recapture_when_rescan_cannot_work() {
     RT.block_on(async {
-        let _t = turn(4).await;
+        let _t = turn("t03_heal_loop_guard_then_a_heal_by_recapture_when_rescan_cannot_work").await;
         if !chrome() {
             return skip();
         }
@@ -274,7 +333,7 @@ fn t03_heal_loop_guard_then_a_heal_by_recapture_when_rescan_cannot_work() {
 #[test]
 fn t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_writes_exactly_once() {
     RT.block_on(async {
-        let _t = turn(5).await;
+        let _t = turn("t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_writes_exactly_once").await;
         if !chrome() {
             return skip();
         }
@@ -299,7 +358,7 @@ fn t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_write
         assert_eq!(writes(), 0);
 
         let res = call(SITE, "createPost", args(json!({ "text": "hello from api-anything" })), CallOptions { allow_writes: true, ..fast() }).await;
-        assert!(res.ok, "{}", js(&res));
+        assert!(res.ok, "{}\nSESSION {}\nSPEC {}", js(&res), std::fs::read_to_string(HOME.path().join("sessions").join("fixture.json")).unwrap_or_default(), spec_text());
         assert_eq!(writes(), 1);
         assert!(re("hello from api-anything").is_match(&serde_json::to_string(&res.data).unwrap()));
     })
@@ -308,7 +367,7 @@ fn t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_write
 #[test]
 fn t05_a_per_request_signature_pins_the_op_to_tier_3_which_answers_through_the_trigger() {
     RT.block_on(async {
-        let _t = turn(6).await;
+        let _t = turn("t05_a_per_request_signature_pins_the_op_to_tier_3_which_answers_through_the_trigger").await;
         if !chrome() {
             return skip();
         }
@@ -329,15 +388,18 @@ fn t05_a_per_request_signature_pins_the_op_to_tier_3_which_answers_through_the_t
 #[test]
 fn t06_a_login_wall_served_as_200_html_is_auth_with_a_login_hint() {
     RT.block_on(async {
-        let _t = turn(7).await;
+        let _t = turn("t06_a_login_wall_served_as_200_html_is_auth_with_a_login_hint").await;
         if !chrome() {
             return skip();
         }
         let fx = &*FX;
-        run_trigger(TriggerOptions::new(&format!("{}/login", fx.url), &profile_dir())).await.unwrap(); // stands in for `api-anything login`
+        let lr = run_trigger(TriggerOptions::new(&format!("{}/login", fx.url), &profile_dir())).await.unwrap(); // stands in for `api-anything login`
+        eprintln!("LOGIN final={} cookies={:?} exchanges={:?}", lr.final_url, lr.cookies.iter().map(|c| (c.name.clone(), c.domain.clone(), c.path.clone(), c.expires)).collect::<Vec<_>>(), lr.exchanges.iter().map(|e| (e.request.url.clone(), e.status(), e.request.headers.get("cookie").cloned())).collect::<Vec<_>>());
         let mut input = add("secret", trigger(&format!("{}/private", fx.url)), vec![json!({})]);
         input.matcher = path_match("/private");
-        add_operation(input).await.unwrap();
+        let ar = add_operation(input).await.unwrap();
+        eprintln!("ADD warnings={:?} op={}", ar.warnings, serde_json::to_string(&ar.operation).unwrap());
+        eprintln!("SESSION {}", std::fs::read_to_string(HOME.path().join("sessions").join("fixture.json")).unwrap_or_default().replace(char::is_whitespace, ""));
         assert_eq!(call(SITE, "secret", args(json!({})), fast()).await.data, Some(json!({ "data": { "secret": "only for you" } })));
 
         // log out everywhere: the profile and the jar
@@ -353,7 +415,7 @@ fn t06_a_login_wall_served_as_200_html_is_auth_with_a_login_hint() {
 #[test]
 fn t07_a_rate_limit_is_reported_as_rate_with_no_heal_and_no_retry_via_the_cli() {
     RT.block_on(async {
-        let _t = turn(8).await;
+        let _t = turn("t07_a_rate_limit_is_reported_as_rate_with_no_heal_and_no_retry_via_the_cli").await;
         if !chrome() {
             return skip();
         }
@@ -377,7 +439,7 @@ fn t07_a_rate_limit_is_reported_as_rate_with_no_heal_and_no_retry_via_the_cli() 
 #[test]
 fn t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query() {
     RT.block_on(async {
-        let _t = turn(9).await;
+        let _t = turn("t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query").await;
         if !chrome() {
             return skip();
         }
@@ -399,7 +461,7 @@ fn t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query() 
 #[test]
 fn t09_the_html_recipe_on_a_server_rendered_list_returns_picked_items() {
     RT.block_on(async {
-        let _t = turn(10).await;
+        let _t = turn("t09_the_html_recipe_on_a_server_rendered_list_returns_picked_items").await;
         if !chrome() {
             return skip();
         }
@@ -481,7 +543,7 @@ fn text(r: &Value) -> Value {
 #[test]
 fn t10_the_mcp_server_lists_3_meta_tools_calls_reads_and_hides_and_refuses_writes() {
     RT.block_on(async {
-        let _t = turn(11).await;
+        let _t = turn("t10_the_mcp_server_lists_3_meta_tools_calls_reads_and_hides_and_refuses_writes").await;
         if !chrome() {
             return skip();
         }
@@ -512,7 +574,7 @@ fn t10_the_mcp_server_lists_3_meta_tools_calls_reads_and_hides_and_refuses_write
 #[test]
 fn t11_a_missing_session_value_clean_home_is_auth_one_trigger_run_refreshes_it_then_tier_1_works() {
     RT.block_on(async {
-        let _t = turn(12).await;
+        let _t = turn("t11_a_missing_session_value_clean_home_is_auth_one_trigger_run_refreshes_it_then_tier_1_works").await;
         if !chrome() {
             return skip();
         }
@@ -536,7 +598,7 @@ fn t11_a_missing_session_value_clean_home_is_auth_one_trigger_run_refreshes_it_t
 #[test]
 fn t12_public_keeps_a_public_bearer_literal_works_with_no_session_values_and_export_allows_it() {
     RT.block_on(async {
-        let _t = turn(13).await;
+        let _t = turn("t12_public_keeps_a_public_bearer_literal_works_with_no_session_values_and_export_allows_it").await;
         if !chrome() {
             return skip();
         }
@@ -565,7 +627,7 @@ fn t12_public_keeps_a_public_bearer_literal_works_with_no_session_values_and_exp
 #[test]
 fn t13_a_write_sent_as_a_get_by_a_button_is_learned_without_being_sent_from_a_non_write_capture_is_refused() {
     RT.block_on(async {
-        let _t = turn(14).await;
+        let _t = turn("t13_a_write_sent_as_a_get_by_a_button_is_learned_without_being_sent_from_a_non_write_capture_is_refused").await;
         if !chrome() {
             return skip();
         }
@@ -589,7 +651,7 @@ fn t13_a_write_sent_as_a_get_by_a_button_is_learned_without_being_sent_from_a_no
 #[test]
 fn t14_ids_that_differ_per_page_load_but_replay_fine_are_session_scoped_min_tier_stays_1() {
     RT.block_on(async {
-        let _t = turn(15).await;
+        let _t = turn("t14_ids_that_differ_per_page_load_but_replay_fine_are_session_scoped_min_tier_stays_1").await;
         if !chrome() {
             return skip();
         }
@@ -608,7 +670,7 @@ fn t14_ids_that_differ_per_page_load_but_replay_fine_are_session_scoped_min_tier
 #[test]
 fn t15_add_from_a_saved_run_re_learns_without_a_browser_templating_step_selectors() {
     RT.block_on(async {
-        let _t = turn(16).await;
+        let _t = turn("t15_add_from_a_saved_run_re_learns_without_a_browser_templating_step_selectors").await;
         if !chrome() {
             return skip();
         }
@@ -638,7 +700,7 @@ fn t15_add_from_a_saved_run_re_learns_without_a_browser_templating_step_selector
 #[test]
 fn t16_a_site_that_walls_plain_http_answers_at_tier_2_and_the_result_says_why() {
     RT.block_on(async {
-        let _t = turn(17).await;
+        let _t = turn("t16_a_site_that_walls_plain_http_answers_at_tier_2_and_the_result_says_why").await;
         if !chrome() {
             return skip();
         }
@@ -660,7 +722,7 @@ fn t16_a_site_that_walls_plain_http_answers_at_tier_2_and_the_result_says_why() 
 #[test]
 fn t17_captures_next_hint_points_at_inspect_and_html_when_the_best_candidate_is_the_page_itself() {
     RT.block_on(async {
-        let _t = turn(18).await;
+        let _t = turn("t17_captures_next_hint_points_at_inspect_and_html_when_the_best_candidate_is_the_page_itself").await;
         if !chrome() {
             return skip();
         }
@@ -668,7 +730,7 @@ fn t17_captures_next_hint_points_at_inspect_and_html_when_the_best_candidate_is_
         close_browser().await; // the CLI launches its own Chrome on the same profile
         let r = cli(&["capture", &format!("{}/list", fx.url), "--example", "q=alice"]).await;
         let out: Value = serde_json::from_str(&r.stdout).unwrap_or_else(|_| panic!("{}\n{}", r.stdout, r.stderr));
-        assert_eq!(out["candidates"][0]["kind"], json!("document"));
+        assert_eq!(out["candidates"][0]["kind"], json!("document"), "{}\n{}", r.stdout, r.stderr);
         assert!(re("inspect .* --html").is_match(out["next"].as_str().unwrap_or("")), "{}", out["next"]);
     })
 }
@@ -676,7 +738,7 @@ fn t17_captures_next_hint_points_at_inspect_and_html_when_the_best_candidate_is_
 #[test]
 fn t18_login_imports_the_session_from_the_browser_a_revoke_fresh_cookie_self_heals_by_re_import() {
     RT.block_on(async {
-        let _t = turn(19).await;
+        let _t = turn("t18_login_imports_the_session_from_the_browser_a_revoke_fresh_cookie_self_heals_by_re_import").await;
         if !chrome() {
             return skip();
         }
