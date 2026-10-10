@@ -131,6 +131,22 @@ api-anything call goodreads getBook bookId=50202953
 They cover selected features, not whole sites. `api-anything ops <site>` lists parameters and
 caveats.
 
+## Rust implementation
+
+`rust/` holds a complete rewrite of API Anything in Rust: the same design, the same commands and
+the same JSON output, built into one binary with no Node runtime. The bundled site specs are
+compiled in, so the binary needs nothing beside it. Both implementations keep their data under
+`~/.api-anything`, so specs, sessions and captures made with one are used by the other.
+
+```sh
+cd rust && cargo build --release
+./target/release/api-anything call hacker-news search query=sqlite
+```
+
+Chrome is driven over its DevTools protocol directly (no Playwright), on a pipe that closes with
+the process, so no browser is left behind. `API_ANYTHING_CHROME=/path/to/chrome` points it at a
+Chromium build other than the installed Google Chrome. [How the crate maps to the TypeScript](rust/PORTING.md).
+
 ## How it works
 
 - **Learn.** Chrome records the page's requests for two example inputs. The request that
@@ -184,7 +200,7 @@ window. [Details](docs/REFERENCE.md#logging-in)
 ## Docs
 
 [Benchmark](bench/README.md) · [Demos](docs/demos/README.md) · [Setup for agents](docs/QUICKSTART.md) ·
-[Reference](docs/REFERENCE.md) · [Design](docs/DESIGN.md) · [Release checks](docs/RELEASE-READINESS.md) ·
+[Reference](docs/REFERENCE.md) · [Design](docs/DESIGN.md) · [Rust](docs/RUST.md) · [Release checks](docs/RELEASE-READINESS.md) ·
 [Contributing](CONTRIBUTING.md)
 
 MIT licensed.

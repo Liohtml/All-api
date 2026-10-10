@@ -35,6 +35,23 @@ A non-zero exit status means the clone, the build or the install failed: stop an
 the output. Don't use `npm install -g github:goodnight000/api-anything`, because it fails under npm 11. If
 the global install fails with a permission error (EACCES), don't use sudo. Tell the user and stop.
 
+## 2b. Or install the Rust build
+
+The Rust implementation in `rust/` gives the same command as one binary without Node. With a Rust
+toolchain (`cargo --version`, 1.85 or newer):
+
+```sh
+(
+  dir="$(mktemp -d)" || exit
+  trap 'rm -rf "$dir"' 0
+  git clone -q --depth 1 https://github.com/goodnight000/api-anything.git "$dir" &&
+    cargo install --path "$dir/rust" --locked
+)
+```
+
+Use either install, not both: they share `~/.api-anything`, and the first `api-anything` on the
+PATH wins.
+
 ## 3. Check that it works
 
 ```sh

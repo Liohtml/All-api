@@ -46,3 +46,23 @@ npm run cli -- <command>                       # run the CLI from source
 ```
 
 Don't commit AI attribution trailers.
+
+## Rust port
+
+`rust/` is a complete port of `src/` with the same module names (`rust/src/<module>.rs`) and the
+same tests (`rust/tests/<file>.rs` mirrors `test/<file>.test.ts`; `rust/tests/common/fixture.rs`
+is `test/fixture/server.ts`). `rust/PORTING.md` lists the API differences. The rules above apply
+to it unchanged: the design spec is the same, no credential in a spec, writes sent once, no
+site-specific code. A change in behavior is made in both implementations, and a test is added to
+both suites.
+
+```sh
+cd rust
+cargo test                                     # all tests (browser tests skip without Chrome)
+cargo test --test <file>                       # one file
+cargo clippy --all-targets -- -D warnings      # what CI runs
+cargo fmt                                      # format
+cargo run -- <command>                         # run the CLI from source
+```
+
+Browser tests look for Google Chrome where the installer puts it, or at `API_ANYTHING_CHROME`.
