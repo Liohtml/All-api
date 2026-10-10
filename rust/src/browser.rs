@@ -188,6 +188,7 @@ impl Browser {
                 .position(|t| inner.attached.get(t).map(|a| a.url == "about:blank" || a.url.is_empty()).unwrap_or(false));
             idx.map(|i| inner.unclaimed.remove(i)).and_then(|t| inner.attached.get(&t).cloned())
         };
+        let reused = reuse.is_some();
         let at = match reuse {
             Some(a) => a,
             None => {
@@ -224,6 +225,10 @@ impl Browser {
         // A target this process created attaches paused (waitForDebuggerOnStart) and a navigation on it
         // never starts its request; a reused tab was let go on attach, and letting it go again is a no-op.
         page.resume().await;
+        if reused {
+            // the tab Chrome opened at launch is not shown, so it is hidden to its page: see createTarget above
+            let _ = page.send("Page.bringToFront", json!({})).await;
+        }
         Ok(page)
     }
 
