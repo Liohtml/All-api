@@ -53,6 +53,7 @@ impl Cdp {
         let s2 = shared.clone();
         tokio::spawn(async move {
             while let Some(text) = rx.recv().await {
+                if std::env::var_os("API_ANYTHING_CDP_TRACE").is_some() { eprintln!("<- {}", text.chars().take(400).collect::<String>()); } // TEMP TRACE
                 let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
                 if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
                     let waiter = s2.pending.lock().unwrap().remove(&id);
@@ -106,6 +107,7 @@ impl Cdp {
         if let Some(s) = session {
             msg["sessionId"] = json!(s);
         }
+        if std::env::var_os("API_ANYTHING_CDP_TRACE").is_some() { eprintln!("-> {}", msg.to_string().chars().take(400).collect::<String>()); } // TEMP TRACE
         if self.tx.send(msg.to_string()).is_err() {
             self.shared.pending.lock().unwrap().remove(&id);
             bail!("the browser connection closed");

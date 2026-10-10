@@ -19,7 +19,7 @@ async fn repro_capture_stall() {
             .args(["capture", &url])
             .env("API_ANYTHING_HOME", home.path())
             .env("API_ANYTHING_CHROME", chrome)
-            .env("API_ANYTHING_DEBUG", "1")
+            .env("API_ANYTHING_CDP_TRACE", "1")
             .output()
             .await
             .unwrap();
@@ -28,10 +28,9 @@ async fn repro_capture_stall() {
         if !ok {
             fails += 1;
         }
-        eprintln!("run {i} {path}: {} in {:.1}s; stderr: {}", if ok { "ok" } else { "STALL" }, t.elapsed().as_secs_f64(), String::from_utf8_lossy(&o.stderr).trim());
-        if !ok {
-            eprintln!("  stdout: {}", out.trim());
-        }
+        eprintln!("run {i} {path}: {} in {:.1}s", if ok { "ok" } else { "STALL" }, t.elapsed().as_secs_f64());
+        let dir = "/tmp/claude-0/-home-user-All-api/59c6a397-6a3c-5b81-81fa-d429c880e3f8/scratchpad";
+        std::fs::write(format!("{dir}/trace-{i}-{}.log", if ok { "ok" } else { "stall" }), &o.stderr).unwrap();
     }
     eprintln!("fails: {fails}/12");
 }
