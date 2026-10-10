@@ -43,6 +43,7 @@ toolchain (`cargo --version`, 1.85 or newer):
 ```sh
 cargo install --git https://github.com/Liohtml/All-api api-anything
 ```
+
 Use either install, not both: they share `~/.api-anything`, and the first `api-anything` on the
 PATH wins.
 
