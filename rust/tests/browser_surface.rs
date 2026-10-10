@@ -2,7 +2,9 @@
 //! Each test is a regression for a bug that was fixed. The browser tests run serially under one
 //! runtime and one home, as node:test runs them in order on one event loop.
 mod common;
-use api_anything::browser::{PageFetchOptions, TriggerOptions, add_cookies_to_profile, close_browser, hold, open_browser, page_fetch, run_trigger};
+use api_anything::browser::{
+    PageFetchOptions, TriggerOptions, add_cookies_to_profile, close_browser, hold, open_browser, page_fetch, run_trigger,
+};
 use api_anything::execute::{CallOptions, call};
 use api_anything::heal::{AddInput, CapturePageOptions, Recipe, add_operation, capture_page, load_capture, profile_dir};
 use api_anything::mcp::Server;
@@ -139,7 +141,9 @@ mod edge {
     async fn handle(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         let path = req.uri().path().to_string();
         let search = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-        let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
         let name = query.get("name").cloned().unwrap_or_else(|| "alice".to_string());
         let cookie = req.headers().get("cookie").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
         inner.calls.lock().unwrap().push(format!("{path}{search}"));
@@ -327,7 +331,14 @@ mod edge {
         pub async fn start_with(root_redirect: bool) -> EdgeFixture {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
-            let inner = Arc::new(Inner { calls: Mutex::new(vec![]), hanging: Mutex::new(vec![]), held: Mutex::new(vec![]), ws_messages: AtomicUsize::new(0), root_redirect, port });
+            let inner = Arc::new(Inner {
+                calls: Mutex::new(vec![]),
+                hanging: Mutex::new(vec![]),
+                held: Mutex::new(vec![]),
+                ws_messages: AtomicUsize::new(0),
+                root_redirect,
+                port,
+            });
             let app = axum::Router::new().fallback(handle).with_state(inner.clone());
             let task = tokio::spawn(async move {
                 axum::serve(listener, app).await.unwrap();
@@ -465,7 +476,20 @@ async fn clear_cookies() {
 }
 
 fn add(site: &str, op: &str, trigger: Option<Trigger>, examples: Vec<Value>) -> AddInput {
-    AddInput { site: site.into(), op: op.into(), trigger, examples: examples.into_iter().map(args).collect(), matcher: None, write: false, description: None, response: None, public: None, from: None, from2: None, fetcher: None }
+    AddInput {
+        site: site.into(),
+        op: op.into(),
+        trigger,
+        examples: examples.into_iter().map(args).collect(),
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public: None,
+        from: None,
+        from2: None,
+        fetcher: None,
+    }
 }
 
 fn re(p: &str) -> regex::Regex {
@@ -516,7 +540,9 @@ fn debounced_typeahead_600_ms_after_fill_is_captured() {
     }
     run(async {
         let fx = fx().await;
-        let r = trigger(&format!("{}/debounce", fx.url), Some(json!([{ "action": "fill", "selector": "#q", "value": "kittens" }])), None).await.unwrap();
+        let r = trigger(&format!("{}/debounce", fx.url), Some(json!([{ "action": "fill", "selector": "#q", "value": "kittens" }])), None)
+            .await
+            .unwrap();
         assert!(r.exchanges.iter().any(|e| e.request.url.ends_with("/api/search?q=kittens")), "{}", urls(&r));
     });
 }
@@ -528,7 +554,9 @@ fn clicking_a_download_link_does_not_break_the_capture() {
     }
     run(async {
         let fx = fx().await;
-        let r = trigger(&format!("{}/dl-page?name=dolly", fx.url), Some(json!([{ "action": "click", "selector": "#dl" }])), None).await.unwrap();
+        let r = trigger(&format!("{}/dl-page?name=dolly", fx.url), Some(json!([{ "action": "click", "selector": "#dl" }])), None)
+            .await
+            .unwrap();
         assert!(data(&r, "dolly").is_some(), "{}", urls(&r));
         assert!(r.exchanges.iter().any(|e| e.request.url.contains("/file.csv")), "{}", urls(&r));
     });
@@ -542,7 +570,9 @@ fn a_step_whose_selector_is_gone_fails_within_the_budget_and_names_the_selector(
     run(async {
         let fx = fx().await;
         let t0 = Instant::now();
-        let r = trigger(&format!("{}/data-page?name=x", fx.url), Some(json!([{ "action": "click", "selector": "#gone-button" }])), Some(3000)).await;
+        let r =
+            trigger(&format!("{}/data-page?name=x", fx.url), Some(json!([{ "action": "click", "selector": "#gone-button" }])), Some(3000))
+                .await;
         let e = r.expect_err("the step fails");
         assert!(e.to_string().contains("#gone-button"), "{e}");
         assert!(t0.elapsed() < Duration::from_millis(8000), "{:?}", t0.elapsed());
@@ -556,7 +586,8 @@ fn popup_the_data_request_made_in_a_tab_the_trigger_opens_is_captured() {
     }
     run(async {
         let fx = fx().await;
-        let r = trigger(&format!("{}/popup?name=pop", fx.url), Some(json!([{ "action": "click", "selector": "#open" }])), None).await.unwrap();
+        let r =
+            trigger(&format!("{}/popup?name=pop", fx.url), Some(json!([{ "action": "click", "selector": "#open" }])), None).await.unwrap();
         assert!(data(&r, "pop").is_some(), "captured: {}", urls(&r));
     });
 }
@@ -572,7 +603,9 @@ fn popup_a_tab_the_trigger_opened_is_closed_afterwards_no_tab_leak_in_a_long_liv
         let ctx = open_browser(PROF.path(), true).await.unwrap();
         let before = ctx.pages().len();
         for i in 0..3 {
-            trigger(&format!("{}/popup?name=pop{i}", fx.url), Some(json!([{ "action": "click", "selector": "#open" }])), None).await.unwrap();
+            trigger(&format!("{}/popup?name=pop{i}", fx.url), Some(json!([{ "action": "click", "selector": "#open" }])), None)
+                .await
+                .unwrap();
         }
         // the browser reports a closed tab a moment after the run closed it
         until(|| ctx.pages().len() == before, 2000).await;
@@ -701,7 +734,10 @@ fn tier_2_works_when_the_api_origins_root_redirects_to_another_origin() {
 /* ------------------------------------------------------------ call() through the browser */
 
 fn tier3_ops(fx: &EdgeFixture) -> Vec<Value> {
-    vec![op(fx, "members", "/members?name={name}", "/api/data", json!({ "minTier": 3 })), op(fx, "page", "/data-page?name={name}", "/api/data", json!({ "minTier": 3 }))]
+    vec![
+        op(fx, "members", "/members?name={name}", "/api/data", json!({ "minTier": 3 })),
+        op(fx, "page", "/data-page?name={name}", "/api/data", json!({ "minTier": 3 })),
+    ]
 }
 
 #[test]
@@ -715,7 +751,12 @@ fn concurrent_tier_3_calls_share_one_chrome_and_each_gets_its_own_answer() {
         let names = ["ann", "ben", "cat", "dan"];
         let rs = futures_util::future::join_all(names.iter().map(|name| call("edge", "page", args(json!({ "name": name })), fast()))).await;
         let got: Vec<Value> = rs.iter().map(|r| r.data.as_ref().map(|d| d["name"].clone()).unwrap_or(Value::Null)).collect();
-        assert_eq!(got, names.iter().map(|n| json!(n)).collect::<Vec<_>>(), "{}", rs.iter().map(|r| j(r).to_string()).collect::<Vec<_>>().join("\n"));
+        assert_eq!(
+            got,
+            names.iter().map(|n| json!(n)).collect::<Vec<_>>(),
+            "{}",
+            rs.iter().map(|r| j(r).to_string()).collect::<Vec<_>>().join("\n")
+        );
     });
 }
 
@@ -789,7 +830,14 @@ fn add_on_a_trigger_that_redirects_to_a_login_page_does_not_silently_learn_the_l
         write_spec(fx, tier3_ops(fx), "edge");
         clear_cookies().await;
         let login = re("(?i)log ?in|sign ?in");
-        match add_operation(add("edge", "walled", Some(Trigger { url: format!("{}/members?name={{name}}", fx.url), steps: None, soft_from: None }), vec![json!({ "name": "alice" }), json!({ "name": "bobby" })])).await {
+        match add_operation(add(
+            "edge",
+            "walled",
+            Some(Trigger { url: format!("{}/members?name={{name}}", fx.url), steps: None, soft_from: None }),
+            vec![json!({ "name": "alice" }), json!({ "name": "bobby" })],
+        ))
+        .await
+        {
             Err(e) => assert!(login.is_match(&e.to_string()), "{e}"),
             Ok(r) => assert!(
                 r.warnings.iter().any(|w| login.is_match(w)),
@@ -864,7 +912,16 @@ fn a_known_writes_match_aborts_it_whatever_its_resource_type_image_ping() {
         write_spec(fx, hang_ops(fx), "edge");
         let before = votes(fx).len();
         // learning itself may refuse (an image request is ranked as noise even with --match); the write must not go out either way
-        let mut input = add("edge", "vote", Some(Trigger { url: format!("{}/vote-page", fx.url), steps: Some(steps(json!([{ "action": "click", "selector": "#img" }]))), soft_from: None }), vec![json!({})]);
+        let mut input = add(
+            "edge",
+            "vote",
+            Some(Trigger {
+                url: format!("{}/vote-page", fx.url),
+                steps: Some(steps(json!([{ "action": "click", "selector": "#img" }]))),
+                soft_from: None,
+            }),
+            vec![json!({})],
+        );
         input.write = true;
         input.matcher = Some(parse_match(&json!({ "path": "/api/vote" })).unwrap());
         let _ = add_operation(input).await;
@@ -955,7 +1012,13 @@ fn capture_write_a_stylesheet_the_guard_allows_that_is_redirected_to_the_write_i
         let r = capture_write(&format!("{}/vote-page", fx.url), Some(json!([{ "action": "click", "selector": "#hop" }])), None).await;
         assert!(fx.calls()[seen..].contains(&"/safe.css".to_string()), "the stylesheet itself was allowed, so the redirect happened");
         assert_eq!(votes(fx)[before..], Vec::<String>::new()[..], "the redirect carried the request to the write");
-        let hops: Vec<(bool, String)> = r.result.exchanges.iter().filter(|e| e.request.url.ends_with("/api/vote?how=hop")).map(|e| (e.aborted, e.resource_type.clone())).collect();
+        let hops: Vec<(bool, String)> = r
+            .result
+            .exchanges
+            .iter()
+            .filter(|e| e.request.url.ends_with("/api/vote?how=hop"))
+            .map(|e| (e.aborted, e.resource_type.clone()))
+            .collect();
         assert_eq!(hops, vec![(true, "stylesheet".to_string())], "recorded once, as aborted");
     });
 }
@@ -990,7 +1053,9 @@ fn capture_write_a_new_tab_that_another_runs_page_opens_meanwhile_is_not_stopped
         // The first step loads a stylesheet, which the write guard lets through: once the server has
         // seen it the run is in its steps, where every other GET of its own pages is aborted.
         let url = format!("{}/vote-page", fx.url);
-        let run_task = tokio::spawn(async move { capture_write(&url, Some(json!([{ "action": "click", "selector": "#css" }, { "action": "wait", "ms": 4000 }])), None).await });
+        let run_task = tokio::spawn(async move {
+            capture_write(&url, Some(json!([{ "action": "click", "selector": "#css" }, { "action": "wait", "ms": 4000 }])), None).await
+        });
         // after the run has started: it holds the browser, which is otherwise closed when idle
         let _h = hold();
         let ctx = open_browser(&profile_dir(), true).await.unwrap();
@@ -1000,7 +1065,10 @@ fn capture_write_a_new_tab_that_another_runs_page_opens_meanwhile_is_not_stopped
         let known: HashSet<String> = ctx.pages().into_iter().map(|p| p.target_id).collect();
         other.evaluate("document.querySelector('#newtab').click()").await.unwrap();
         let landed = format!("{}/api/vote?how=newtab", fx.url);
-        assert!(until(|| ctx.pages().iter().any(|p| !known.contains(&p.target_id) && p.url == landed), 10_000).await, "the other page's tab opened and loaded");
+        assert!(
+            until(|| ctx.pages().iter().any(|p| !known.contains(&p.target_id) && p.url == landed), 10_000).await,
+            "the other page's tab opened and loaded"
+        );
         for p in ctx.pages().into_iter().filter(|p| !known.contains(&p.target_id)) {
             let _ = ctx.close_target(&p.target_id).await;
         }
@@ -1035,7 +1103,11 @@ fn another_runs_new_tab_still_loads_after_this_runs_first_page_has_closed_while_
         let other = ctx.new_page(None).await.unwrap();
         other.navigate(&format!("{}/vote-page?name=other", fx.url), None, Duration::from_secs(30)).await.unwrap();
         let mine = || page_at(&ctx, &mine_url);
-        let tabbed = until(|| mine().map(|m| ctx.pages().iter().any(|p| p.opener_id.as_deref() == Some(m.target_id.as_str()))).unwrap_or(false), 20_000).await;
+        let tabbed = until(
+            || mine().map(|m| ctx.pages().iter().any(|p| p.opener_id.as_deref() == Some(m.target_id.as_str()))).unwrap_or(false),
+            20_000,
+        )
+        .await;
         assert!(tabbed, "the run's page opened its tab");
         let mine_id = mine().unwrap().target_id;
         ctx.close_target(&mine_id).await.unwrap();
@@ -1175,7 +1247,12 @@ fn an_app_that_waits_for_its_shared_worker_starts_guarded_or_not() {
             let mut o = TriggerOptions::new(&format!("{}/worker-app?name=app", fx.url), &profile_dir());
             o.intercept = intercept;
             let r = run_trigger(o).await.unwrap();
-            let urls: Vec<String> = r.exchanges.iter().filter_map(|e| url::Url::parse(&e.request.url).ok()).map(|u| format!("{}{}", u.path(), u.query().map(|q| format!("?{q}")).unwrap_or_default())).collect();
+            let urls: Vec<String> = r
+                .exchanges
+                .iter()
+                .filter_map(|e| url::Url::parse(&e.request.url).ok())
+                .map(|u| format!("{}{}", u.path(), u.query().map(|q| format!("?{q}")).unwrap_or_default()))
+                .collect();
             assert!(urls.contains(&"/api/data?name=app".to_string()), "{}: {urls:?}", if guarded { "guarded" } else { "unguarded" });
         }
     });
@@ -1199,7 +1276,14 @@ fn a_tab_the_runs_page_opened_that_has_no_page_yet_when_the_run_ends_is_closed_w
         fx.release(); // the tab's document arrives only now, with a script that POSTs
         sleep(1000).await;
         assert_eq!(votes(fx)[before..], Vec::<String>::new()[..], "the tab wrote once the run's guard was lifted");
-        let open: Vec<String> = open_browser(&profile_dir(), true).await.unwrap().pages().into_iter().map(|p| p.url).filter(|u| u.contains("/held-vote")).collect();
+        let open: Vec<String> = open_browser(&profile_dir(), true)
+            .await
+            .unwrap()
+            .pages()
+            .into_iter()
+            .map(|p| p.url)
+            .filter(|u| u.contains("/held-vote"))
+            .collect();
         assert_eq!(open, Vec::<String>::new(), "the tab was left open");
     });
 }
@@ -1242,7 +1326,14 @@ async fn leaving_write_never_reaches_the_server(how: &str) {
     sleep(300).await; // what a closing page got out arrives after the run has returned
     assert_eq!(votes(fx)[before..], Vec::<String>::new()[..], "the write was performed while learning it");
     // stopped as the run ended, and still learnable: a write that is only ever sent on leaving
-    let stopped: Vec<bool> = load_capture(&r.id).unwrap().result.exchanges.iter().filter(|e| e.request.url.ends_with(&format!("/api/vote?how={how}"))).map(|e| e.aborted).collect();
+    let stopped: Vec<bool> = load_capture(&r.id)
+        .unwrap()
+        .result
+        .exchanges
+        .iter()
+        .filter(|e| e.request.url.ends_with(&format!("/api/vote?how={how}")))
+        .map(|e| e.aborted)
+        .collect();
     assert_eq!(stopped, vec![true], "{}", urls(&r.result));
 }
 
@@ -1326,7 +1417,9 @@ fn capture_write_a_message_sent_over_an_already_open_web_socket_never_reaches_th
         let before = fx.ws_messages();
         capture_write(
             &format!("{}/chat", fx.url),
-            Some(json!([{ "action": "fill", "selector": "#msg", "value": "a private message" }, { "action": "click", "selector": "#send" }])),
+            Some(
+                json!([{ "action": "fill", "selector": "#msg", "value": "a private message" }, { "action": "click", "selector": "#send" }]),
+            ),
             None,
         )
         .await;
@@ -1377,7 +1470,11 @@ fn a_tier_2_request_that_never_answers_times_out_instead_of_hanging_the_call() {
         let fx = fx().await;
         write_spec(fx, hang_ops(fx), "edge");
         let t0 = Instant::now();
-        let r = tokio::time::timeout(Duration::from_millis(20_000), call("edge", "hang", args(json!({})), CallOptions { min_interval_ms: Some(0), timeout_ms: Some(3000), ..Default::default() })).await;
+        let r = tokio::time::timeout(
+            Duration::from_millis(20_000),
+            call("edge", "hang", args(json!({})), CallOptions { min_interval_ms: Some(0), timeout_ms: Some(3000), ..Default::default() }),
+        )
+        .await;
         assert!(r.is_ok(), "call() still pending after 20 s (timeoutMs 3000)");
         assert!(t0.elapsed() < Duration::from_millis(15_000), "{:?}", t0.elapsed());
     });
@@ -1400,7 +1497,11 @@ struct Spawned {
 
 fn cli_spawn(cmd_args: &[&str]) -> Spawned {
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_api-anything"));
-    c.args(cmd_args).env("API_ANYTHING_HOME", home()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    c.args(cmd_args)
+        .env("API_ANYTHING_HOME", home())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     Spawned { child: c.spawn().expect("the api-anything binary"), t0: Instant::now() }
 }
 
@@ -1433,7 +1534,13 @@ impl Spawned {
             },
             None => self.child.wait().await.unwrap(),
         };
-        CliRun { code: status.code(), signal: status.signal(), stdout: out.await.unwrap(), stderr: err.await.unwrap(), ms: t0.elapsed().as_millis() as u64 }
+        CliRun {
+            code: status.code(),
+            signal: status.signal(),
+            stdout: out.await.unwrap(),
+            stderr: err.await.unwrap(),
+            ms: t0.elapsed().as_millis() as u64,
+        }
     }
 }
 
@@ -1447,7 +1554,11 @@ const BUSY: &str = r#"[{"action":"wait","ms":20000}]"#;
 /// Chrome processes launched on this home's profile.
 fn chromes() -> usize {
     let needle = format!("{}/profile", home().display());
-    let out = std::process::Command::new("ps").args(["-axo", "command"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let out = std::process::Command::new("ps")
+        .args(["-axo", "command"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
     out.lines().filter(|l| l.contains(&needle) && !l.contains("ps -axo")).count()
 }
 
@@ -1476,7 +1587,11 @@ impl McpClient {
         let msg = json!({ "jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params });
         self.stdin.as_mut().unwrap().write_all(format!("{msg}\n").as_bytes()).await.unwrap();
         loop {
-            let line = tokio::time::timeout(Duration::from_secs(120), self.lines.next_line()).await.expect("an answer within 2 min").unwrap().expect("the server answers");
+            let line = tokio::time::timeout(Duration::from_secs(120), self.lines.next_line())
+                .await
+                .expect("an answer within 2 min")
+                .unwrap()
+                .expect("the server answers");
             let v: Value = serde_json::from_str(&line).unwrap();
             if v.get("id") == Some(&json!(self.next_id)) {
                 return v;
@@ -1501,13 +1616,27 @@ impl McpClient {
 async fn mcp_holding_chrome() -> McpClient {
     use tokio::io::AsyncBufReadExt;
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_api-anything"));
-    c.arg("mcp").env("API_ANYTHING_HOME", home()).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    c.arg("mcp")
+        .env("API_ANYTHING_HOME", home())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
     let mut child = c.spawn().expect("the api-anything binary");
     let stdin = child.stdin.take();
     let stdout = child.stdout.take().unwrap();
     let mut client = McpClient { child, stdin, lines: tokio::io::BufReader::new(stdout).lines(), next_id: 0 };
-    client.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "edge", "version": "0" } })).await;
-    let r = client.request("tools/call", json!({ "name": "call_operation", "arguments": { "site": "edge", "op": "page", "args": { "name": "mcp" } } })).await;
+    client
+        .request(
+            "initialize",
+            json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "edge", "version": "0" } }),
+        )
+        .await;
+    let r = client
+        .request(
+            "tools/call",
+            json!({ "name": "call_operation", "arguments": { "site": "edge", "op": "page", "args": { "name": "mcp" } } }),
+        )
+        .await;
     assert_eq!(r["result"]["isError"], json!(false), "{r}");
     client
 }
@@ -1612,7 +1741,12 @@ fn sigterm_mid_capture_exits_promptly() {
         let t0 = Instant::now();
         kill(pid, libc::SIGTERM);
         let r = running.wait(Some(40_000)).await;
-        assert!(t0.elapsed() < Duration::from_millis(5000), "exited {} ms after SIGTERM: {}", t0.elapsed().as_millis(), r.stdout.chars().take(160).collect::<String>());
+        assert!(
+            t0.elapsed() < Duration::from_millis(5000),
+            "exited {} ms after SIGTERM: {}",
+            t0.elapsed().as_millis(),
+            r.stdout.chars().take(160).collect::<String>()
+        );
     });
 }
 
@@ -1657,7 +1791,12 @@ fn a_heal_that_could_not_launch_chrome_profile_locked_does_not_mark_the_op_stale
         close_browser().await;
         assert!(until(|| chromes() == 0, 5000).await);
         let again = call("edge", "gone", args(json!({ "name": "zed" })), fast()).await;
-        assert!(again.ok, "first: {}\nthen: {}", first.reason.as_deref().unwrap_or("").chars().take(160).collect::<String>(), j(&again).to_string().chars().take(400).collect::<String>());
+        assert!(
+            again.ok,
+            "first: {}\nthen: {}",
+            first.reason.as_deref().unwrap_or("").chars().take(160).collect::<String>(),
+            j(&again).to_string().chars().take(400).collect::<String>()
+        );
     });
 }
 
@@ -1686,7 +1825,10 @@ fn the_mcp_server_exits_on_sigterm_once_it_has_launched_chrome() {
 /* ------------------------------------------------------------ MCP */
 
 fn mcp_ops(fx: &EdgeFixture) -> Vec<Value> {
-    vec![op(fx, "get", "/data-page?name={name}", "/api/data", json!({})), op(fx, "huge", "/huge-page?name={name}", "/api/huge-items", json!({}))]
+    vec![
+        op(fx, "get", "/data-page?name={name}", "/api/data", json!({})),
+        op(fx, "huge", "/huge-page?name={name}", "/api/huge-items", json!({})),
+    ]
 }
 
 async fn mcp_setup() -> (&'static EdgeFixture, Server) {
@@ -1738,7 +1880,12 @@ fn concurrent_tier_1_calls_all_answer_with_their_own_data() {
         let calls: Vec<_> = names.iter().map(|name| args(json!({ "site": "edge", "op": "get", "args": { "name": name } }))).collect();
         let rs = futures_util::future::join_all(calls.iter().map(|a| client.call_tool("call_operation", a))).await;
         let got: Vec<Value> = rs.iter().map(|r| r.value["data"]["name"].clone()).collect();
-        assert_eq!(got, names.iter().map(|n| json!(n)).collect::<Vec<_>>(), "{}", rs.iter().map(|r| r.value.to_string()).collect::<Vec<_>>().join("\n"));
+        assert_eq!(
+            got,
+            names.iter().map(|n| json!(n)).collect::<Vec<_>>(),
+            "{}",
+            rs.iter().map(|r| r.value.to_string()).collect::<Vec<_>>().join("\n")
+        );
     });
 }
 
@@ -1800,7 +1947,10 @@ fn k_v_splits_on_the_first_equals_json_merges_under_k_v_empty_values_are_kept() 
         assert!(re(r"name=a%3Db%3Dc&n=5$").is_match(&url(&dry(&["name=a=b=c"]).await.1)));
         assert!(re(r"name=y&n=3$").is_match(&url(&dry(&["--json", r#"{"name":"x","n":3}"#, "name=y"]).await.1)));
         assert!(re(r"name=&n=5$").is_match(&url(&dry(&["name="]).await.1)));
-        assert!(re(r"n=12345678901234567890$").is_match(&url(&dry(&["name=x", "n=12345678901234567890"]).await.1)), "no rounding past 2^53");
+        assert!(
+            re(r"n=12345678901234567890$").is_match(&url(&dry(&["name=x", "n=12345678901234567890"]).await.1)),
+            "no rounding past 2^53"
+        );
     });
 }
 
@@ -1897,7 +2047,8 @@ fn exact_live_values_are_refused_raw_jwt_and_bearer_shapes_warn() {
     let session = sid_session();
     let hit = scan_secrets(&json!({ "url": format!("https://example.com/?s={TOKEN}") }), &session, &HashSet::new());
     assert_eq!(hit.secrets, vec!["$.url holds the live cookie sid".to_string()]);
-    let w = scan_secrets(&json!({ "h": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlXzEyMw" }), &Session::empty(), &HashSet::new());
+    let w =
+        scan_secrets(&json!({ "h": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlXzEyMw" }), &Session::empty(), &HashSet::new());
     assert!(re("JWT").is_match(&w.warnings.join(",")), "{:?}", w.warnings);
 }
 
@@ -1921,7 +2072,12 @@ fn add_plus_export_a_page_that_echoes_its_base64_session_cookie_inside_a_query_v
     run(async {
         let fx = fx().await;
         close_browser().await;
-        let mut input = add("tok", "user", Some(Trigger { url: format!("{}/tok-page?name={{name}}", fx.url), steps: None, soft_from: None }), vec![json!({ "name": "alice" }), json!({ "name": "bobby" })]);
+        let mut input = add(
+            "tok",
+            "user",
+            Some(Trigger { url: format!("{}/tok-page?name={{name}}", fx.url), steps: None, soft_from: None }),
+            vec![json!({ "name": "alice" }), json!({ "name": "bobby" })],
+        );
         input.response = Some(Recipe { extract: Some("data".into()), ..Default::default() });
         let r = add_operation(input).await.unwrap();
         let ex = export_site("tok", false).unwrap();

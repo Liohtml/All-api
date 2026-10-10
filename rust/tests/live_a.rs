@@ -73,15 +73,22 @@ mod live {
         Response::builder().status(status).header("content-type", kind).body(Body::from(text)).unwrap()
     }
     fn html(markup: &str, status: u16) -> Response {
-        send(status, "text/html; charset=utf-8", format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>Fixture</title></head><body>{markup}</body></html>"))
+        send(
+            status,
+            "text/html; charset=utf-8",
+            format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>Fixture</title></head><body>{markup}</body></html>"),
+        )
     }
 
     async fn handle(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         let method = req.method().to_string();
         let p = req.uri().path().to_string();
         let search = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-        let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
-        let headers: HashMap<String, String> = req.headers().iter().map(|(k, v)| (k.as_str().to_lowercase(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
+        let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let headers: HashMap<String, String> =
+            req.headers().iter().map(|(k, v)| (k.as_str().to_lowercase(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
         let raw_referer = req.headers().get("referer").map(|v| v.as_bytes().iter().map(|&b| b as char).collect::<String>());
         let gz = headers.get("content-encoding").map(|e| e.to_lowercase().contains("gzip")).unwrap_or(false);
         let raw = axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await.unwrap_or_default();
@@ -94,7 +101,13 @@ mod live {
         } else {
             String::from_utf8_lossy(&raw).into_owned()
         };
-        inner.hits.lock().unwrap().push(Hit { method, path: format!("{p}{search}"), headers: headers.clone(), raw_referer, body: body.clone() });
+        inner.hits.lock().unwrap().push(Hit {
+            method,
+            path: format!("{p}{search}"),
+            headers: headers.clone(),
+            raw_referer,
+            body: body.clone(),
+        });
         let q = query.get("q").cloned().unwrap_or_default();
         let cookie = headers.get("cookie").cloned().unwrap_or_default();
 
@@ -241,7 +254,9 @@ struct Heal {
 }
 
 fn heals() -> Vec<Heal> {
-    std::fs::read_to_string(HOME.path().join("heals.jsonl")).map(|t| t.trim().lines().filter(|l| !l.is_empty()).map(|l| serde_json::from_str(l).unwrap()).collect()).unwrap_or_default()
+    std::fs::read_to_string(HOME.path().join("heals.jsonl"))
+        .map(|t| t.trim().lines().filter(|l| !l.is_empty()).map(|l| serde_json::from_str(l).unwrap()).collect())
+        .unwrap_or_default()
 }
 
 fn op_of(site: &str, name: &str) -> Operation {
@@ -280,7 +295,20 @@ fn html_recipe(items: &str, fields: Value) -> Recipe {
 }
 
 fn add(site: &str, op: &str, trigger_url: &str, examples: Vec<Value>, matcher: Option<Match>, response: Option<Recipe>) -> AddInput {
-    AddInput { site: site.into(), op: op.into(), trigger: Some(trigger(trigger_url)), examples: examples.into_iter().map(args).collect(), matcher, write: false, description: None, response, public: None, from: None, from2: None, fetcher: None }
+    AddInput {
+        site: site.into(),
+        op: op.into(),
+        trigger: Some(trigger(trigger_url)),
+        examples: examples.into_iter().map(args).collect(),
+        matcher,
+        write: false,
+        description: None,
+        response,
+        public: None,
+        from: None,
+        from2: None,
+        fetcher: None,
+    }
 }
 
 fn re(p: &str) -> regex::Regex {
@@ -319,7 +347,15 @@ fn hdr_site(fx: &LiveFixture) {
         true,
     ))
     .unwrap();
-    save_site(&Site { name: SITE.into(), display_name: None, base_url: fx.url.clone(), description: None, login_cookies: None, operations: vec![learned.operation] }).unwrap();
+    save_site(&Site {
+        name: SITE.into(),
+        display_name: None,
+        base_url: fx.url.clone(),
+        description: None,
+        login_cookies: None,
+        operations: vec![learned.operation],
+    })
+    .unwrap();
 }
 
 #[test]
@@ -426,7 +462,10 @@ fn reddits_200_js_proof_of_work_page_auto_submitted_solution_form_js_challenge_i
 
 #[test]
 fn a_large_64_kb_reddit_prove_your_humanity_recaptcha_page_on_an_html_op_is_blocked() {
-    let body = format!("<!doctype html><html><head><title>Reddit - Prove your humanity</title></head><body>{}<div class=\"g-recaptcha\"></div></body></html>", "<div>x</div>".repeat(8000));
+    let body = format!(
+        "<!doctype html><html><head><title>Reddit - Prove your humanity</title></head><body>{}<div class=\"g-recaptcha\"></div></body></html>",
+        "<div>x</div>".repeat(8000)
+    );
     assert!(body.len() > 64_000);
     let c = classify(&wall_op("html"), &observed(200, "text/html", &body));
     assert_eq!(c.class, Class::Blocked, "{c:?}");
@@ -451,7 +490,16 @@ fn add_with_html_learns_the_html_document_not_a_json_telemetry_beacon_that_echoe
     }
     run(async {
         let fx = fx().await;
-        let r = add_operation(add("shop", "search", &format!("{}/shop?q={{q}}", fx.url), vec![json!({ "q": "kettle" }), json!({ "q": "toaster" })], None, Some(html_recipe("li.r", json!({ "title": "" }))))).await.unwrap();
+        let r = add_operation(add(
+            "shop",
+            "search",
+            &format!("{}/shop?q={{q}}", fx.url),
+            vec![json!({ "q": "kettle" }), json!({ "q": "toaster" })],
+            None,
+            Some(html_recipe("li.r", json!({ "title": "" }))),
+        ))
+        .await
+        .unwrap();
         assert_eq!(path_of(&r.operation.request.url), "/shop", "learned {} {}", r.operation.request.method, r.operation.request.url);
         assert_eq!(r.operation.request.method, "GET");
         let c = call("shop", "search", args(json!({ "q": "blender" })), fast()).await;
@@ -491,7 +539,16 @@ fn a_gzip_compressed_request_body_youtube_innertube_content_encoding_gzip_is_lea
     }
     run(async {
         let fx = fx().await;
-        let r = add_operation(add("gz", "search", &format!("{}/gz?q={{q}}", fx.url), vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })], Some(matcher(json!({ "method": "POST", "path": "/api/gz" }))), None)).await.unwrap();
+        let r = add_operation(add(
+            "gz",
+            "search",
+            &format!("{}/gz?q={{q}}", fx.url),
+            vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })],
+            Some(matcher(json!({ "method": "POST", "path": "/api/gz" }))),
+            None,
+        ))
+        .await
+        .unwrap();
         // Today: the body is captured as lossy UTF-8, q is found only in the referer, and the changing
         // gzip bytes read as a nonce, so minTier 3 (a browser run per call). With a trigger whose URL
         // lacks q (YouTube's search box), add fails outright.
@@ -511,7 +568,16 @@ fn a_param_found_only_in_the_referer_never_yields_an_op_that_returns_the_example
     }
     run(async {
         let fx = fx().await;
-        let learned = match add_operation(add("b64", "search", &format!("{}/b64?q={{q}}", fx.url), vec![json!({ "q": "kittens" })], Some(matcher(json!({ "method": "POST", "path": "/api/b64" }))), None)).await {
+        let learned = match add_operation(add(
+            "b64",
+            "search",
+            &format!("{}/b64?q={{q}}", fx.url),
+            vec![json!({ "q": "kittens" })],
+            Some(matcher(json!({ "method": "POST", "path": "/api/b64" }))),
+            None,
+        ))
+        .await
+        {
             Ok(_) => true,
             Err(e) => {
                 // the correct outcome: "example value ... is not in the learned request"
@@ -563,7 +629,12 @@ fn a_waf_interstitial_at_tier_1_is_not_drift_no_heal_is_logged_and_challenge_par
         // The TypeScript suite runs this after the tier-3 test, whose Madrid run left the WAF cookie in
         // the profile, so the add below learns from the real page; cargo orders tests by name, so that
         // precondition is put back here.
-        api_anything::browser::add_cookies_to_profile(&[api_anything::types::StoredCookie::new("aws-waf-token", "ok", "127.0.0.1")], &profile_dir()).await.unwrap();
+        api_anything::browser::add_cookies_to_profile(
+            &[api_anything::types::StoredCookie::new("aws-waf-token", "ok", "127.0.0.1")],
+            &profile_dir(),
+        )
+        .await
+        .unwrap();
         add_operation(add(
             "hotels2",
             "search",

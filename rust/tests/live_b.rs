@@ -42,7 +42,9 @@ mod etag {
 
     async fn handle(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         if req.uri().path() == "/s" {
-            let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+            let query: HashMap<String, String> = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
             let q = query.get("q").cloned().unwrap_or_default();
             let etag = format!("W/\"v1-{}\"", q.bytes().map(|b| format!("{b:02x}")).collect::<String>());
             let inm = req.headers().get("if-none-match").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
@@ -50,7 +52,12 @@ mod etag {
                 inner.conditional.lock().unwrap().push(inm.clone());
             }
             if inm.as_deref() == Some(etag.as_str()) {
-                return Response::builder().status(304).header("etag", etag).header("cache-control", "no-cache").body(Body::empty()).unwrap();
+                return Response::builder()
+                    .status(304)
+                    .header("etag", etag)
+                    .header("cache-control", "no-cache")
+                    .body(Body::empty())
+                    .unwrap();
             }
             return Response::builder()
                 .status(200)
@@ -166,7 +173,14 @@ fn capture(url: &str, exchanges: Vec<Exchange>) -> CaptureFile {
 }
 
 fn html_doc(url: &str, body: &str, status: u16, req_headers: Option<Value>) -> Exchange {
-    ex(ExSpec { url, kind_type: Some("text/html; charset=utf-8"), body: Some(body.to_string()), status: Some(status), req_headers, ..Default::default() })
+    ex(ExSpec {
+        url,
+        kind_type: Some("text/html; charset=utf-8"),
+        body: Some(body.to_string()),
+        status: Some(status),
+        req_headers,
+        ..Default::default()
+    })
 }
 
 fn trigger(url: &str) -> Trigger {
@@ -179,7 +193,15 @@ fn html_recipe(items: &str, fields: Value) -> HtmlRecipe {
 
 fn html_op(url: &str, a: Value, items: &str) -> Operation {
     let values: Vec<String> = a.as_object().unwrap().values().map(|v| v.as_str().unwrap_or("").to_string()).collect();
-    let mut op = learn_operation(&LearnInput::new(vec![html_doc(url, &format!("<ul><li class=\"r\">{}</li></ul>", values.join(" ")), 200, None)], vec![args(a)], "page", trigger(url), true)).unwrap().operation;
+    let mut op = learn_operation(&LearnInput::new(
+        vec![html_doc(url, &format!("<ul><li class=\"r\">{}</li></ul>", values.join(" ")), 200, None)],
+        vec![args(a)],
+        "page",
+        trigger(url),
+        true,
+    ))
+    .unwrap()
+    .operation;
     op.response.format = Format::Html;
     op.response.html = Some(html_recipe(items, json!({ "t": "" })));
     op
@@ -192,7 +214,20 @@ fn observed(status: u16, content_type: &str, body: &str) -> Observed {
 }
 
 fn from_capture(site: &str, op: &str, examples: Vec<Value>, response: Recipe, c: CaptureFile) -> AddInput {
-    AddInput { site: site.into(), op: op.into(), trigger: None, examples: examples.into_iter().map(args).collect(), matcher: None, write: false, description: None, response: Some(response), public: None, from: Some(FromCapture { capture: c, id: None }), from2: None, fetcher: None }
+    AddInput {
+        site: site.into(),
+        op: op.into(),
+        trigger: None,
+        examples: examples.into_iter().map(args).collect(),
+        matcher: None,
+        write: false,
+        description: None,
+        response: Some(response),
+        public: None,
+        from: Some(FromCapture { capture: c, id: None }),
+        from2: None,
+        fetcher: None,
+    }
 }
 
 fn re(p: &str) -> regex::Regex {
@@ -257,7 +292,11 @@ fn add_on_a_page_that_served_a_bot_challenge_does_not_tell_the_agent_to_fix_its_
         ))
         .await
         .unwrap();
-        let w = r.warnings.iter().find(|x| re("blocked").is_match(x)).unwrap_or_else(|| panic!("a blocked warning: {}", r.warnings.join(" | ")));
+        let w = r
+            .warnings
+            .iter()
+            .find(|x| re("blocked").is_match(x))
+            .unwrap_or_else(|| panic!("a blocked warning: {}", r.warnings.join(" | ")));
         assert!(!re("Fix --extract").is_match(w), "a bot wall is not fixed by editing --extract/--html");
         assert!(re("login").is_match(w), "points at api-anything login to clear the challenge");
     });
@@ -267,8 +306,14 @@ fn add_on_a_page_that_served_a_bot_challenge_does_not_tell_the_agent_to_fix_its_
 
 #[test]
 fn a_document_whose_url_ends_in_js_github_com_mrdoob_three_js_is_a_candidate_not_an_asset() {
-    let doc = html_doc("https://github.com/mrdoob/three.js", "<html><body><strong itemprop=name><a>three.js</a></strong></body></html>", 200, None);
-    let ranked = rank_candidates(std::slice::from_ref(&doc), &args(json!({ "owner": "mrdoob", "repo": "three.js" })), RankOptions::default());
+    let doc = html_doc(
+        "https://github.com/mrdoob/three.js",
+        "<html><body><strong itemprop=name><a>three.js</a></strong></body></html>",
+        200,
+        None,
+    );
+    let ranked =
+        rank_candidates(std::slice::from_ref(&doc), &args(json!({ "owner": "mrdoob", "repo": "three.js" })), RankOptions::default());
     assert_eq!(ranked.iter().map(|c| c.id).collect::<Vec<_>>(), vec![doc.id]);
 }
 
@@ -292,22 +337,35 @@ fn add_from_with_repo_next_js_learns_the_document() {
 #[test]
 fn regression_a_plain_document_path_still_ranks() {
     let doc = html_doc("https://github.com/microsoft/playwright", "<html>playwright</html>", 200, None);
-    assert_eq!(rank_candidates(std::slice::from_ref(&doc), &args(json!({ "repo": "playwright" })), RankOptions::default()).first().map(|c| c.id), Some(doc.id));
+    assert_eq!(
+        rank_candidates(std::slice::from_ref(&doc), &args(json!({ "repo": "playwright" })), RankOptions::default()).first().map(|c| c.id),
+        Some(doc.id)
+    );
 }
 
 #[test]
-fn with_embedded_add_picks_the_document_the_recipe_resolves_on_not_a_post_whose_multipart_body_merely_contains_the_value_as_a_substring_github_search() {
+fn with_embedded_add_picks_the_document_the_recipe_resolves_on_not_a_post_whose_multipart_body_merely_contains_the_value_as_a_substring_github_search()
+ {
     run(async {
         let url = "https://github.com/search?q=playwright&type=repositories";
         let results = json!({ "payload": { "blackbirdSearchRoute": { "results": [{ "hl_name": "microsoft/<em>playwright</em>", "followers": 96753 }] } } });
-        let doc = html_doc(url, &format!("<html><body><script type=\"application/json\" data-target=\"react-app.embeddedData\">{results}</script></body></html>"), 200, None);
+        let doc = html_doc(
+            url,
+            &format!(
+                "<html><body><script type=\"application/json\" data-target=\"react-app.embeddedData\">{results}</script></body></html>"
+            ),
+            200,
+            None,
+        );
         let b = "----WebKitFormBoundaryeZEwOAxK1zXOg1LT";
         let sponsor = ex(ExSpec {
             url: "https://github.com/sponsors/batch_deferred_sponsor_buttons",
             method: Some("POST"),
             kind: Some("fetch"),
             req_headers: Some(json!({ "content-type": format!("multipart/form-data; boundary={b}"), "referer": url })),
-            req_body: Some(&format!("--{b}\r\nContent-Disposition: form-data; name=\"_method\"\r\n\r\nGET\r\n--{b}\r\nContent-Disposition: form-data; name=\"items[item-85809106][repo_name]\"\r\n\r\ninvisible_playwright_mcp\r\n--{b}--\r\n")),
+            req_body: Some(&format!(
+                "--{b}\r\nContent-Disposition: form-data; name=\"_method\"\r\n\r\nGET\r\n--{b}\r\nContent-Disposition: form-data; name=\"items[item-85809106][repo_name]\"\r\n\r\ninvisible_playwright_mcp\r\n--{b}--\r\n"
+            )),
             body: Some(json!({ "item-85809106": "<button>Sponsor</button>".repeat(200) }).to_string()),
             ..Default::default()
         });
@@ -315,7 +373,11 @@ fn with_embedded_add_picks_the_document_the_recipe_resolves_on_not_a_post_whose_
             "gh-edge",
             "search",
             vec![json!({ "q": "playwright" })],
-            Recipe { embedded: Some(Embedded { regex: "data-target=\"react-app.embeddedData\">(\\{)".into() }), extract: Some("payload.blackbirdSearchRoute.results".into()), ..Default::default() },
+            Recipe {
+                embedded: Some(Embedded { regex: "data-target=\"react-app.embeddedData\">(\\{)".into() }),
+                extract: Some("payload.blackbirdSearchRoute.results".into()),
+                ..Default::default()
+            },
             capture(url, vec![doc, sponsor]),
         ))
         .await
@@ -332,7 +394,14 @@ fn with_embedded_add_picks_the_document_the_recipe_resolves_on_not_a_post_whose_
 fn if_none_match_if_modified_since_from_a_revalidating_browser_are_not_stored_in_the_template() {
     let url = "https://github.com/search?q=playwright&type=repositories";
     let op = learn_operation(&LearnInput::new(
-        vec![html_doc(url, "<ul><li class=r>playwright</li></ul>", 200, Some(json!({ "if-none-match": "W/\"25f941cd5c0f1f789be9542912883d9d\"", "if-modified-since": "Sat, 26 Sep 2026 10:00:00 GMT" })))],
+        vec![html_doc(
+            url,
+            "<ul><li class=r>playwright</li></ul>",
+            200,
+            Some(
+                json!({ "if-none-match": "W/\"25f941cd5c0f1f789be9542912883d9d\"", "if-modified-since": "Sat, 26 Sep 2026 10:00:00 GMT" }),
+            ),
+        )],
         vec![args(json!({ "q": "playwright" }))],
         "search",
         trigger("https://github.com/search?q={q}&type=repositories"),
@@ -351,7 +420,9 @@ fn verify_the_example_args_still_answers_ok_at_tier_1() {
     }
     run(async {
         let fx = Fixture::start().await;
-        capture_page(CapturePageOptions { url: format!("{}/s?q=alpha", fx.url), steps: None, soft_from: None, write: false, args: None }).await.unwrap();
+        capture_page(CapturePageOptions { url: format!("{}/s?q=alpha", fx.url), steps: None, soft_from: None, write: false, args: None })
+            .await
+            .unwrap();
         let r = add_operation(AddInput {
             site: "etag".into(),
             op: "search".into(),
@@ -368,8 +439,20 @@ fn verify_the_example_args_still_answers_ok_at_tier_1() {
         })
         .await
         .unwrap();
-        let res = call("etag", "search", args(json!({ "q": "alpha" })), CallOptions { min_interval_ms: Some(0), max_tier: Some(1), ..Default::default() }).await;
-        assert!(res.ok, "{}; stored if-none-match={:?}; server saw {:?}", j(&res), r.operation.request.headers.get("if-none-match"), fx.conditional());
+        let res = call(
+            "etag",
+            "search",
+            args(json!({ "q": "alpha" })),
+            CallOptions { min_interval_ms: Some(0), max_tier: Some(1), ..Default::default() },
+        )
+        .await;
+        assert!(
+            res.ok,
+            "{}; stored if-none-match={:?}; server saw {:?}",
+            j(&res),
+            r.operation.request.headers.get("if-none-match"),
+            fx.conditional()
+        );
         api_anything::browser::close_browser().await;
         fx.close();
     });
@@ -380,7 +463,12 @@ fn verify_the_example_args_still_answers_ok_at_tier_1() {
 // Normalized responses key entities by id (Kayak's legs/segments/airports, X's globalObjects).
 fn learn_from(body: Value) -> Operation {
     learn_operation(&LearnInput::new(
-        vec![ex(ExSpec { url: "https://api.example.com/search?q=sfo", kind: Some("fetch"), body: Some(body.to_string()), ..Default::default() })],
+        vec![ex(ExSpec {
+            url: "https://api.example.com/search?q=sfo",
+            kind: Some("fetch"),
+            body: Some(body.to_string()),
+            ..Default::default()
+        })],
         vec![args(json!({ "q": "sfo" }))],
         "search",
         trigger("https://example.com/s/{q}"),
@@ -443,7 +531,10 @@ fn a_400_that_names_no_param_is_error_even_when_a_slot_ends_in_an_array_index_js
     ))
     .unwrap()
     .operation;
-    assert_eq!(op.slots.iter().find(|s| s.param.is_some()).map(|s| s.at.clone()), Some(vec!["body".to_string(), "json:/legs/0/origin/airports/0".to_string()]));
+    assert_eq!(
+        op.slots.iter().find(|s| s.param.is_some()).map(|s| s.at.clone()),
+        Some(vec!["body".to_string(), "json:/legs/0/origin/airports/0".to_string()])
+    );
     let c = classify(&op, &observed(400, "application/json", &json!({ "error": "upstream failure", "retry": 0 }).to_string()));
     assert_eq!(c.class, Class::Error, "{}", c.reason);
 }
@@ -451,5 +542,8 @@ fn a_400_that_names_no_param_is_error_even_when_a_slot_ends_in_an_array_index_js
 #[test]
 fn regression_wikipedia_style_404_on_a_templated_path_is_input() {
     let op = html_op("https://en.wikipedia.org/wiki/Platypus", json!({ "title": "Platypus" }), "#content");
-    assert_eq!(classify(&op, &observed(404, "text/html", "<html>Wikipedia does not have an article with this exact name.</html>")).class, Class::Input);
+    assert_eq!(
+        classify(&op, &observed(404, "text/html", "<html>Wikipedia does not have an article with this exact name.</html>")).class,
+        Class::Input
+    );
 }
