@@ -123,9 +123,7 @@ fn page(build: &str, body: &str) -> String {
 
 const LOGIN_FORM: &str = "<form action=\"/login\" method=\"get\"><input name=\"user\"><input type=\"password\" name=\"password\"><button>Sign in</button></form>";
 fn login_page() -> String {
-    format!(
-        "<!doctype html><html><head><title>Log in</title></head><body>{LOGIN_FORM}</body></html>"
-    )
+    format!("<!doctype html><html><head><title>Log in</title></head><body>{LOGIN_FORM}</body></html>")
 }
 
 fn user(name: &str, extras: bool) -> Value {
@@ -146,10 +144,7 @@ fn user(name: &str, extras: bool) -> Value {
 
 fn cookies(headers: &HeaderMap) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let raw = headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let raw = headers.get("cookie").and_then(|v| v.to_str().ok()).unwrap_or("");
     for part in raw.split(';') {
         let part = part.trim();
         if let Some(eq) = part.find('=') {
@@ -162,9 +157,7 @@ fn cookies(headers: &HeaderMap) -> HashMap<String, String> {
 }
 
 fn send(status: u16, content_type: &str, body: String, extra: &[(&str, String)]) -> Response {
-    let mut r = Response::builder()
-        .status(status)
-        .header("content-type", content_type);
+    let mut r = Response::builder().status(status).header("content-type", content_type);
     for (k, v) in extra {
         r = r.header(*k, v.as_str());
     }
@@ -172,12 +165,7 @@ fn send(status: u16, content_type: &str, body: String, extra: &[(&str, String)])
 }
 
 fn json_res(status: u16, v: Value) -> Response {
-    send(
-        status,
-        "application/json; charset=utf-8",
-        v.to_string(),
-        &[],
-    )
+    send(status, "application/json; charset=utf-8", v.to_string(), &[])
 }
 
 fn redirect(location: &str, extra: &[(&str, String)]) -> Response {
@@ -190,25 +178,14 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
     let method = req.method().clone();
     let uri = req.uri().clone();
     let headers = req.headers().clone();
-    let body_bytes = axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    let body_bytes = axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await.unwrap_or_default();
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let p = uri.path().to_string();
     let query: HashMap<String, String> =
-        url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
+        url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
     let jar = cookies(&headers);
-    let header_map: HashMap<String, String> = headers
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.as_str().to_lowercase(),
-                v.to_str().unwrap_or("").to_string(),
-            )
-        })
-        .collect();
+    let header_map: HashMap<String, String> =
+        headers.iter().map(|(k, v)| (k.as_str().to_lowercase(), v.to_str().unwrap_or("").to_string())).collect();
     let h = |name: &str| header_map.get(name).cloned().unwrap_or_default();
 
     let state = {
@@ -216,11 +193,7 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
         if p.starts_with("/api/") {
             g.calls.push(FixtureCall {
                 method: method.to_string(),
-                path: format!(
-                    "{}{}",
-                    uri.path(),
-                    uri.query().map(|q| format!("?{q}")).unwrap_or_default()
-                ),
+                path: format!("{}{}", uri.path(), uri.query().map(|q| format!("?{q}")).unwrap_or_default()),
                 headers: header_map.clone(),
                 body: body.clone(),
             });
@@ -230,67 +203,28 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
 
     // HTML pages hand out the CSRF cookie that page JS echoes in x-csrf-token (X's ct0 pattern).
     let html = |status: u16, markup: String| -> Response {
-        let extra: Vec<(&str, String)> = if jar.contains_key("ct0") {
-            vec![]
-        } else {
-            vec![(
-                "set-cookie",
-                format!("ct0={}; Path=/; SameSite=Lax", hex(16)),
-            )]
-        };
+        let extra: Vec<(&str, String)> =
+            if jar.contains_key("ct0") { vec![] } else { vec![("set-cookie", format!("ct0={}; Path=/; SameSite=Lax", hex(16)))] };
         send(status, "text/html; charset=utf-8", markup, &extra)
     };
-    let csrf_ok = || {
-        jar.get("ct0")
-            .map(|c| !c.is_empty() && h("x-csrf-token") == *c)
-            .unwrap_or(false)
-    };
-    let users_list = || {
-        LIST_USERS
-            .iter()
-            .map(|n| format!("<li>{n}</li>"))
-            .collect::<String>()
-    };
+    let csrf_ok = || jar.get("ct0").map(|c| !c.is_empty() && h("x-csrf-token") == *c).unwrap_or(false);
+    let users_list = || LIST_USERS.iter().map(|n| format!("<li>{n}</li>")).collect::<String>();
 
     if p == "/" {
         return html(
             200,
-            page(
-                &state.build,
-                &LIST_USERS
-                    .iter()
-                    .map(|n| format!("<a href=\"/u/{n}\">{n}</a>"))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
+            page(&state.build, &LIST_USERS.iter().map(|n| format!("<a href=\"/u/{n}\">{n}</a>")).collect::<Vec<_>>().join(" ")),
         );
     }
-    let one_seg = |prefix: &str| {
-        p.starts_with(prefix) && p.len() > prefix.len() && !p[prefix.len()..].contains('/')
-    };
-    if one_seg("/u/")
-        || p == "/search"
-        || p == "/feed"
-        || p == "/scoped"
-        || p == "/walled"
-        || p.starts_with("/spa/")
-    {
+    let one_seg = |prefix: &str| p.starts_with(prefix) && p.len() > prefix.len() && !p[prefix.len()..].contains('/');
+    if one_seg("/u/") || p == "/search" || p == "/feed" || p == "/scoped" || p == "/walled" || p.starts_with("/spa/") {
         return html(200, page(&state.build, ""));
     }
     if p == "/compose" {
-        return html(
-            200,
-            page(
-                &state.build,
-                "<textarea id=\"text\"></textarea><button id=\"post\">Post</button>",
-            ),
-        );
+        return html(200, page(&state.build, "<textarea id=\"text\"></textarea><button id=\"post\">Post</button>"));
     }
     if one_seg("/follow/") {
-        return html(
-            200,
-            page(&state.build, "<button id=\"follow\">Follow</button>"),
-        );
+        return html(200, page(&state.build, "<button id=\"follow\">Follow</button>"));
     }
     if p == "/sw" {
         return html(200, "<!doctype html><html><body><script>(async()=>{try{navigator.serviceWorker.register(\"/sw.js\").catch(()=>{});await Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(r,500))])}catch{}fetch(\"/api/sw-write\",{method:\"POST\",body:\"do-it\"})})()</script></body></html>".to_string());
@@ -303,36 +237,25 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
         let items: String = LIST_USERS
             .iter()
             .filter(|n| n.contains(q.as_str()))
-            .map(|n| format!("<li class=\"user\"><a class=\"name\" href=\"/u/{n}\">{n}</a> <span class=\"followers\">{}</span></li>", n.len() * 100))
+            .map(|n| {
+                format!(
+                    "<li class=\"user\"><a class=\"name\" href=\"/u/{n}\">{n}</a> <span class=\"followers\">{}</span></li>",
+                    n.len() * 100
+                )
+            })
             .collect();
-        return html(
-            200,
-            format!("<!doctype html><html><body><ul class=\"users\">{items}</ul></body></html>"),
-        );
+        return html(200, format!("<!doctype html><html><body><ul class=\"users\">{items}</ul></body></html>"));
     }
     if p == format!("/static/app.{}.js", state.build) {
         return send(200, "application/javascript", app_js(&state), &[]);
     }
     if p == "/login" {
         let token = hex(12);
-        return redirect(
-            "/private",
-            &[(
-                "set-cookie",
-                format!("session={token}; Path=/; HttpOnly; SameSite=Lax"),
-            )],
-        );
+        return redirect("/private", &[("set-cookie", format!("session={token}; Path=/; HttpOnly; SameSite=Lax"))]);
     }
     if p == "/private" {
-        let valid = jar
-            .get("session")
-            .map(|s| !s.is_empty() && !inner.lock().unwrap().revoked.contains(s))
-            .unwrap_or(false);
-        return if valid {
-            json_res(200, json!({"data": {"secret": "only for you"}}))
-        } else {
-            html(200, login_page())
-        };
+        let valid = jar.get("session").map(|s| !s.is_empty() && !inner.lock().unwrap().revoked.contains(s)).unwrap_or(false);
+        return if valid { json_res(200, json!({"data": {"secret": "only for you"}})) } else { html(200, login_page()) };
     }
     if p == "/account" {
         return redirect("/signin?next=%2Faccount", &[]);
@@ -347,22 +270,10 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
         return redirect("/forum", &[]);
     }
     if p == "/docs/login" {
-        return html(
-            200,
-            format!(
-                "<!doctype html><html><body><ul>{}</ul></body></html>",
-                users_list()
-            ),
-        );
+        return html(200, format!("<!doctype html><html><body><ul>{}</ul></body></html>", users_list()));
     }
     if p == "/notice" {
-        return html(
-            200,
-            format!(
-                "<!doctype html><html><body><p>Please log in to comment.</p><ul>{}</ul></body></html>",
-                users_list()
-            ),
-        );
+        return html(200, format!("<!doctype html><html><body><p>Please log in to comment.</p><ul>{}</ul></body></html>", users_list()));
     }
     if p == "/catalog" {
         return html(
@@ -383,13 +294,7 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
         );
     }
     if p == "/forum" {
-        return html(
-            200,
-            format!(
-                "<!doctype html><html><body>{LOGIN_FORM}<ul>{}</ul></body></html>",
-                users_list()
-            ),
-        );
+        return html(200, format!("<!doctype html><html><body>{LOGIN_FORM}<ul>{}</ul></body></html>", users_list()));
     }
     if p.starts_with("/forum/") {
         return html(
@@ -404,11 +309,7 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
         let parts: Vec<&str> = rest.split('/').collect();
         if parts.len() == 2 && (parts[1] == "UserByName" || parts[1] == "CreatePost") {
             let (qid, op) = (parts[0], parts[1]);
-            let want = if op == "UserByName" {
-                &state.user_query_id
-            } else {
-                &state.create_query_id
-            };
+            let want = if op == "UserByName" { &state.user_query_id } else { &state.create_query_id };
             if qid != want {
                 return send(404, "text/plain", String::new(), &[]);
             }
@@ -416,65 +317,37 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
                 return json_res(403, json!({"errors": [{"message": "csrf token mismatch"}]}));
             }
             if h("authorization") != PUBLIC_BEARER {
-                return json_res(
-                    400,
-                    json!({"errors": [{"message": "Bad Authentication data", "code": 215}]}),
-                );
+                return json_res(400, json!({"errors": [{"message": "Bad Authentication data", "code": 215}]}));
             }
             if op == "UserByName" && method == Method::GET {
-                let v: Value = match serde_json::from_str(
-                    query.get("variables").map(|s| s.as_str()).unwrap_or(""),
-                ) {
+                let v: Value = match serde_json::from_str(query.get("variables").map(|s| s.as_str()).unwrap_or("")) {
                     Ok(v) => v,
                     Err(_) => {
-                        return json_res(
-                            400,
-                            json!({"errors": [{"message": "variables must be JSON"}]}),
-                        );
+                        return json_res(400, json!({"errors": [{"message": "variables must be JSON"}]}));
                     }
                 };
                 let Some(name) = v.get("name").and_then(|n| n.as_str()) else {
-                    return json_res(
-                        400,
-                        json!({"errors": [{"message": "Variable $name must be defined"}]}),
-                    );
+                    return json_res(400, json!({"errors": [{"message": "Variable $name must be defined"}]}));
                 };
                 // a handle that doesn't exist: 200 with empty data, as X answers
                 if name.starts_with("nobody") {
                     return json_res(200, json!({"data": {}}));
                 }
-                return json_res(
-                    200,
-                    user(name, v.get("withExtras") == Some(&Value::Bool(true))),
-                );
+                return json_res(200, user(name, v.get("withExtras") == Some(&Value::Bool(true))));
             }
             if op == "CreatePost" && method == Method::POST {
-                let parsed: Value =
-                    serde_json::from_str(if body.is_empty() { "{}" } else { &body })
-                        .unwrap_or(json!({}));
-                let text = parsed
-                    .get("variables")
-                    .and_then(|v| v.get("text"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                return json_res(
-                    200,
-                    json!({"data": {"create_post": {"id": format!("19{now}"), "text": text}}}),
-                );
+                let parsed: Value = serde_json::from_str(if body.is_empty() { "{}" } else { &body }).unwrap_or(json!({}));
+                let text = parsed.get("variables").and_then(|v| v.get("text")).cloned().unwrap_or(Value::Null);
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+                return json_res(200, json!({"data": {"create_post": {"id": format!("19{now}"), "text": text}}}));
             }
             return json_res(405, json!({"errors": [{"message": "method not allowed"}]}));
         }
     }
 
     if p == "/api/rpc" && method == Method::POST {
-        let freq = url::form_urlencoded::parse(body.as_bytes())
-            .find(|(k, _)| k == "f.req")
-            .map(|(_, v)| v.into_owned())
-            .unwrap_or_default();
+        let freq =
+            url::form_urlencoded::parse(body.as_bytes()).find(|(k, _)| k == "f.req").map(|(_, v)| v.into_owned()).unwrap_or_default();
         let parsed = serde_json::from_str::<Value>(&freq).ok().and_then(|outer| {
             let inner_text = outer.get(0)?.get(0)?.get(1)?.as_str()?.to_string();
             let arr: Value = serde_json::from_str(&inner_text).ok()?;
@@ -486,20 +359,14 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
                     .map(|i| {
                         json!([
                             format!("{q} result {i}"),
-                            format!(
-                                "https://example.test/{}/{i}",
-                                api_anything::util::encode_uri_component(&q)
-                            )
+                            format!("https://example.test/{}/{i}", api_anything::util::encode_uri_component(&q))
                         ])
                     })
                     .collect();
                 send(
                     200,
                     "application/json; charset=utf-8",
-                    format!(
-                        ")]}}'\n{}",
-                        json!([["wrb.fr", "search", json!([results]).to_string()]])
-                    ),
+                    format!(")]}}'\n{}", json!([["wrb.fr", "search", json!([results]).to_string()]])),
                     &[],
                 )
             }
@@ -516,48 +383,35 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
             }
             g.seen_sigs.insert(sig);
         }
-        return json_res(
-            200,
-            json!({"data": {"feed": [{"id": "f1", "text": "first"}, {"id": "f2", "text": "second"}]}}),
-        );
+        return json_res(200, json!({"data": {"feed": [{"id": "f1", "text": "first"}, {"id": "f2", "text": "second"}]}}));
     }
 
     // A bot wall that only lets real browsers through; Chrome's brotli support stands in for its TLS fingerprint.
     if p == "/api/walled" {
         let ae = h("accept-encoding");
         if !ae.split(|c: char| !c.is_alphanumeric()).any(|t| t == "br") {
-            return send(403, "text/html", "<html><head><title>Just a moment...</title></head><body>cf-chl-bypass</body></html>".to_string(), &[]);
+            return send(
+                403,
+                "text/html",
+                "<html><head><title>Just a moment...</title></head><body>cf-chl-bypass</body></html>".to_string(),
+                &[],
+            );
         }
         return json_res(200, json!({"data": {"items": ["behind the wall"]}}));
     }
     if p == "/api/scoped" {
-        let q = query
-            .get("q")
-            .cloned()
-            .unwrap_or_else(|| "null".to_string());
-        return json_res(
-            200,
-            json!({"data": {"results": [format!("{q} one"), format!("{q} two")]}}),
-        );
+        let q = query.get("q").cloned().unwrap_or_else(|| "null".to_string());
+        return json_res(200, json!({"data": {"results": [format!("{q} one"), format!("{q} two")]}}));
     }
     if p == "/api/mine" {
-        let key = jar
-            .get("session")
-            .cloned()
-            .unwrap_or_else(|| "guest".to_string());
-        return json_res(
-            200,
-            json!({key: [{"name": query.get("name").cloned().map(Value::String).unwrap_or(Value::Null)}]}),
-        );
+        let key = jar.get("session").cloned().unwrap_or_else(|| "guest".to_string());
+        return json_res(200, json!({key: [{"name": query.get("name").cloned().map(Value::String).unwrap_or(Value::Null)}]}));
     }
     if p == "/api/follow" || p == "/api/sw-write" {
         return json_res(200, json!({"ok": true}));
     }
     if p == "/api/spa/user" {
-        return json_res(
-            200,
-            json!({"name": query.get("name").cloned().map(Value::String).unwrap_or(Value::Null)}),
-        );
+        return json_res(200, json!({"name": query.get("name").cloned().map(Value::String).unwrap_or(Value::Null)}));
     }
     if p == "/api/limited" {
         let mut g = inner.lock().unwrap();
@@ -568,41 +422,26 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
             json_res(200, json!({"data": {"n": g.limited_hits}}))
         };
     }
-    (
-        StatusCode::NOT_FOUND,
-        [("content-type", "text/plain")],
-        "not found",
-    )
-        .into_response()
+    (StatusCode::NOT_FOUND, [("content-type", "text/plain")], "not found").into_response()
 }
 
 impl Fixture {
     pub async fn start() -> Fixture {
         let inner = Arc::new(Mutex::new(Inner {
-            state: FixtureState {
-                user_query_id: id22(),
-                create_query_id: id22(),
-                build: hex(4),
-            },
+            state: FixtureState { user_query_id: id22(), create_query_id: id22(), build: hex(4) },
             calls: vec![],
             seen_sigs: HashSet::new(),
             revoked: HashSet::new(),
             require_signature: false,
             limited_hits: 0,
         }));
-        let app = axum::Router::new()
-            .fallback(handle)
-            .with_state(inner.clone());
+        let app = axum::Router::new().fallback(handle).with_state(inner.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        Fixture {
-            url: format!("http://127.0.0.1:{port}"),
-            inner,
-            task,
-        }
+        Fixture { url: format!("http://127.0.0.1:{port}"), inner, task }
     }
     /// every /api/* hit, in order
     pub fn calls(&self) -> Vec<FixtureCall> {

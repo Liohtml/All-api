@@ -4,15 +4,16 @@
 //! are run through `learn_operation` with the same inputs (`add_like`), and the "nothing is saved"
 //! directory checks are left out.
 mod common;
+use api_anything::heal::{AddInput, AddResult, CaptureFile, FromCapture, add_operation};
 use api_anything::http::build_request;
 use api_anything::learn::{LearnInput, Learned, learn_operation, matches};
 use api_anything::secrets::scan_secrets;
 use api_anything::session::Session;
 use api_anything::spec::{Match, Operation, Request, Trigger};
-use api_anything::store::{export_site, save_site};
+use api_anything::store::export_site;
 use api_anything::types::{Exchange, StoredCookie};
-use api_anything::util::{b64_decode_lenient_str, b64_encode, search_of};
-use common::{Home, args, enc, ex, j, no_session, site};
+use api_anything::util::{b64_decode_lenient_str, b64_encode, iso_now, search_of};
+use common::{Home, args, enc, ex, j, no_session};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -234,29 +235,77 @@ fn a_name_marked_public_keeps_no_per_session_field_no_cookie_and_no_stored_value
 
 /* ------------------------------------------------ the add-shaped learn */
 
-/// The learn an `add --from <capture>` runs: the capture's one exchange, its page, cookies, storage
-/// and the caller's public names, with the test file's trigger and example.
-fn add_like(e: Exchange, cookies: Vec<StoredCookie>, st: Option<IndexMap<String, String>>, public: Option<Vec<String>>) -> Result<Learned, anyhow::Error> {
-    let mut i = LearnInput::new(vec![e], vec![args(json!({"q": "kittens"}))], "op", trigger("http://127.0.0.1/?q={q}"), true);
-    i.pages = Some(strs(&["http://127.0.0.1/?q=kittens"]));
-    i.cookies = cookies;
-    i.storage = st;
-    i.public = public;
-    learn_operation(&i)
-}
-
-fn add_err(e: Exchange, cookies: Vec<StoredCookie>, st: Option<IndexMap<String, String>>, public: Option<Vec<String>>) -> String {
-    format!("Error: {}", add_like(e, cookies, st, public).unwrap_err())
-}
-
-/// Save the learned op as a site of its own, as `add` would, so the export can be checked.
-fn save_as(name: &str, base_url: &str, op: &Operation) {
+/// The TS `add(site, ex, cookies, storage, pub)`: an `add --from <capture>` of the one exchange, captured on
+/// the example's page with these cookies and storage, under the caller's public names.
+async fn add_like(
+    site_name: &str,
+    e: Exchange,
+    cookies: Vec<StoredCookie>,
+    st: Option<IndexMap<String, String>>,
+    public: Option<Vec<String>>,
+) -> Result<AddResult, anyhow::Error> {
     let _ = &*HOME;
-    save_site(&site(json!({"name": name, "baseUrl": base_url, "operations": [j(op)]}))).unwrap();
+    let mut c = json!({
+        "id": format!("overlap-{}", e.id),
+        "at": iso_now(),
+        "url": "http://127.0.0.1/?q=kittens",
+        "finalUrl": "http://127.0.0.1/?q=kittens",
+        "exchanges": [e],
+        "cookies": cookies,
+    });
+    if let Some(st) = st {
+        c["storage"] = json!(st);
+    }
+    let capture: CaptureFile = serde_json::from_value(c)?;
+    add_operation(AddInput {
+        site: site_name.into(),
+        op: "op".into(),
+        trigger: Some(trigger("http://127.0.0.1/?q={q}")),
+        examples: vec![args(json!({"q": "kittens"}))],
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public,
+        from: Some(FromCapture { capture, id: None }),
+        from2: None,
+        fetcher: None,
+    })
+    .await
 }
 
-#[test]
-fn a_per_session_field_marked_public_is_saved_and_exported_as_a_reference_with_no_cookie_or_storage_behind_it() {
+async fn add_err(
+    site_name: &str,
+    e: Exchange,
+    cookies: Vec<StoredCookie>,
+    st: Option<IndexMap<String, String>>,
+    public: Option<Vec<String>>,
+) -> String {
+    format!("Error: {}", add_like(site_name, e, cookies, st, public).await.err().expect("add refuses"))
+}
+
+/// `readdirSync(HOME, { recursive: true })`, kept to one site's files: the other tests of this binary
+/// write their own under the same home at the same time.
+fn files_of(site_name: &str) -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p.display().to_string());
+            }
+        }
+    }
+    let mut out = vec![];
+    walk(HOME.path(), &mut out);
+    out.retain(|p| p.contains(site_name));
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn a_per_session_field_marked_public_is_saved_and_exported_as_a_reference_with_no_cookie_or_storage_behind_it() {
     let short = "aB3dEf9hK2";
     let requests: Vec<(&str, Exchange)> = vec![
         ("query:token", get(&format!("{LOCAL}?q=kittens&token={short}"))),
@@ -268,9 +317,8 @@ fn a_per_session_field_marked_public_is_saved_and_exported_as_a_reference_with_n
     for (at, request) in requests {
         let st = if request.request.url.contains("prefix") { Some(storage(&[("cache", short)])) } else { None };
         let name = format!("public-token-{}", next_id());
-        let op = add_like(request, vec![], st, Some(strs(&["token"]))).unwrap().operation;
+        let op = add_like(&name, request, vec![], st, Some(strs(&["token"]))).await.unwrap().operation;
         assert_eq!(last(&op), json!({"ref": "session:op/token", "at": at.split(" > ").collect::<Vec<_>>()}), "{at}");
-        save_as(&name, "http://127.0.0.1", &op);
         let exported = export_site(&name, false).unwrap();
         for spec in [spec_text(&op), serde_json::to_string(&exported.spec).unwrap()] {
             assert!(!spec.contains(short), "{at}: the token is in the saved or exported spec");
@@ -369,8 +417,8 @@ fn learn_err(e: Exchange, cookies: Vec<StoredCookie>, st: Option<IndexMap<String
     format!("Error: {}", learn_with(e, cookies, st, public).unwrap_err())
 }
 
-#[test]
-fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_and_nothing_is_saved() {
+#[tokio::test]
+async fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_and_nothing_is_saved() {
     let short = || vec![cookie("sess", "aB3dE")];
     let whole = obj(&[("q", json!("kittens")), (OPAQUE, json!("v1"))]);
     // keys that would keep the cookie's text in the spec if any part of the container were serialized:
@@ -380,6 +428,7 @@ fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_and_noth
         keys.iter().map(|k| (format!("the key {k}"), csrf_local(obj(&[("q", json!("kittens")), (k, json!("v1"))])), short(), None)).collect();
     cases.push(("an opaque key".into(), csrf_local(whole), vec![], None));
     cases.push(("a short cookie beside the param".into(), csrf_local(json!({"q": "kittens", "stamp": "aB3dE"})), short(), None));
+    let before = files_of("overlap");
     for (what, e, cookies, st) in cases {
         let at = if e.request.body.is_some() { "body" } else { "header:x-csrf-token" };
         let refusal = format!(
@@ -387,23 +436,24 @@ fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_and_noth
             at.replace("header:", "")
         );
         assert_match(&learn_err(e.clone(), cookies.clone(), st.clone(), None), &refusal, &what);
-        assert_match(&add_err(e, cookies, st, None), &refusal, &what);
+        assert_match(&add_err("overlap", e, cookies, st, None).await, &refusal, &what);
     }
+    assert_eq!(files_of("overlap"), before, "a refused add writes nothing");
 }
 
 // --public is the caller's word about a name. It turns off the rules that go by the name, so a
 // container that was a session value by its header's name stays as captured. A cookie or a stored
 // value is a reference under any name, whatever the value looks like.
-#[test]
-fn marked_public_a_container_that_is_in_no_cookie_and_no_storage_stays_as_captured_and_its_param_is_filled() {
+#[tokio::test]
+async fn marked_public_a_container_that_is_in_no_cookie_and_no_storage_stays_as_captured_and_its_param_is_filled() {
     let short = vec![cookie("sess", "aB3dE")];
-    let header = add_like(csrf_local(json!({"q": "kittens", "aB3dE": "v1"})), short, None, Some(strs(&["x-csrf-token"]))).unwrap();
+    let header = add_like("public-header", csrf_local(json!({"q": "kittens", "aB3dE": "v1"})), short, None, Some(strs(&["x-csrf-token"]))).await.unwrap();
     assert_eq!(j(&header.operation.slots), json!([{"param": "q", "at": ["query:q"]}, {"param": "q", "at": ["header:x-csrf-token", "json:/q"]}]));
     assert_eq!(built(&header.operation, json!({"q": "puppies"}), &no_session()).headers["x-csrf-token"], r#"{"q":"puppies","aB3dE":"v1"}"#);
 }
 
-#[test]
-fn under_a_public_name_a_stored_value_is_a_reference_whatever_it_looks_like() {
+#[tokio::test]
+async fn under_a_public_name_a_stored_value_is_a_reference_whatever_it_looks_like() {
     // none of these reads as a credential by its storage key or its shape: that is no proof it is none
     let bearer = format!("Bearer {A}");
     let cases: Vec<(&str, &str, &str, &str)> = vec![
@@ -419,7 +469,7 @@ fn under_a_public_name_a_stored_value_is_a_reference_whatever_it_looks_like() {
         let st = || Some(storage(&[("cache", cache)]));
         let public = || Some(strs(&[name]));
         let learned = learn_with(e(), vec![], st(), public()).unwrap();
-        let added = add_like(e(), vec![], st(), public()).unwrap();
+        let added = add_like(&format!("stored-{}", next_id()), e(), vec![], st(), public()).await.unwrap();
         for op in [&learned.operation, &added.operation] {
             assert_eq!(last(op), json!({"ref": format!("session:op/{reference}"), "at": [format!("header:{name}")]}), "{cache}");
             assert_eq!(op.request.headers[name], "");
@@ -429,17 +479,17 @@ fn under_a_public_name_a_stored_value_is_a_reference_whatever_it_looks_like() {
     }
 }
 
-#[test]
-fn a_live_cookie_inside_a_public_container_is_a_reference_and_one_no_pass_can_make_a_reference_is_refused() {
+#[tokio::test]
+async fn a_live_cookie_inside_a_public_container_is_a_reference_and_one_no_pass_can_make_a_reference_is_refused() {
     let jar_a = || vec![here("sid", A)];
     let rotated = jar(vec![here("sid", B)]);
     // a public header: the param and the cookie beside it are both filled, the rest is as captured
     let value = json!({"q": "kittens", "token": A, "flag": true});
-    for learned in [
-        learn_with(csrf_local(value.clone()), jar_a(), None, Some(strs(&["x-csrf-token"]))).unwrap(),
-        add_like(csrf_local(value.clone()), jar_a(), None, Some(strs(&["x-csrf-token"]))).unwrap(),
+    for operation in [
+        learn_with(csrf_local(value.clone()), jar_a(), None, Some(strs(&["x-csrf-token"]))).unwrap().operation,
+        add_like("public-live-header", csrf_local(value.clone()), jar_a(), None, Some(strs(&["x-csrf-token"]))).await.unwrap().operation,
     ] {
-        let op = &learned.operation;
+        let op = &operation;
         assert_eq!(
             j(&op.slots),
             json!([
@@ -462,12 +512,12 @@ fn a_live_cookie_inside_a_public_container_is_a_reference_and_one_no_pass_can_ma
         let e = csrf_local(v);
         let refusal = r"keep a credential in the spec: header:x-csrf-token > json:/stamp holds the live cookie sess\.";
         assert_match(&learn_err(e.clone(), vec![c.clone()], None, Some(strs(&["x-csrf-token"]))), refusal, "learn");
-        assert_match(&add_err(e, vec![c], None, Some(strs(&["x-csrf-token"]))), refusal, "add");
+        assert_match(&add_err("public-stuck", e, vec![c], None, Some(strs(&["x-csrf-token"]))).await, refusal, "add");
     }
 }
 
-#[test]
-fn a_container_that_is_a_cookie_or_a_stored_value_as_a_whole_is_sent_whole_under_a_public_name_too() {
+#[tokio::test]
+async fn a_container_that_is_a_cookie_or_a_stored_value_as_a_whole_is_sent_whole_under_a_public_name_too() {
     let state = json!({"q": "kittens", "lang": "en"});
     // a cookie as the page decodes it, in a header and as a body; a body the page keeps in storage,
     // under a credential's name or any other
@@ -485,7 +535,7 @@ fn a_container_that_is_a_cookie_or_a_stored_value_as_a_whole_is_sent_whole_under
         for public in [None, Some(strs(&[&at.replace("header:", "")]))] {
             let what = format!("{at} {public:?}");
             assert_match(&learn_err(e.clone(), cookies.clone(), st.clone(), public.clone()), &refusal, &what);
-            assert_match(&add_err(e.clone(), cookies.clone(), st.clone(), public), &refusal, &what);
+            assert_match(&add_err("overlap", e.clone(), cookies.clone(), st.clone(), public).await, &refusal, &what);
         }
     }
 }
@@ -769,19 +819,19 @@ fn the_check_knows_a_stored_credential_that_no_pass_made_a_reference_and_no_stor
     assert_match(&learn_err(copied, vec![], None, None), r"body > json:/state holds the live session value x-csrf-token\.", "whole");
 }
 
-#[test]
-fn an_encoded_copy_of_a_setting_stored_under_a_credentials_key_is_kept_of_a_token_or_a_cookie_refused() {
+#[tokio::test]
+async fn an_encoded_copy_of_a_setting_stored_under_a_credentials_key_is_kept_of_a_token_or_a_cookie_refused() {
     const T: &str = "k7Qm9xLp3Rv8Tz1Wn5Ys6Ub4Hc2Jd0Fa";
     let sent = |value: &str| get(&format!("{LOCAL}?q=kittens&ctx={}", enc(&b64(value))));
     let settings: Vec<Vec<(&str, &str)>> = vec![vec![("token", "solarized-dark")], vec![("cache", r#"{"token":"solarized-dark"}"#)]];
     for st in settings {
         let name = format!("setting-{}", next_id());
-        let op = add_like(sent("solarized-dark"), vec![], Some(storage(&st)), Some(strs(&["ctx"]))).unwrap().operation;
+        let op = add_like(&name, sent("solarized-dark"), vec![], Some(storage(&st)), Some(strs(&["ctx"]))).await.unwrap().operation;
         assert_eq!(j(&op.slots), json!([{"param": "q", "at": ["query:q"]}]));
-        save_as(&name, "http://127.0.0.1", &op);
         assert_eq!(export_site(&name, false).unwrap().secrets, Vec::<String>::new());
         assert_eq!(built(&op, json!({"q": "puppies"}), &no_session()).url, format!("{LOCAL}?q=puppies&ctx={}", enc(&b64("solarized-dark"))));
     }
+    let before = files_of("setting-refused");
     // the same shape with a value that looks like a credential itself, and with a cookie
     let refused: Vec<(&str, Vec<StoredCookie>, Option<IndexMap<String, String>>, &str)> = vec![
         (T, vec![], Some(storage(&[("token", T)])), "session value storage:token"),
@@ -789,8 +839,9 @@ fn an_encoded_copy_of_a_setting_stored_under_a_credentials_key_is_kept_of_a_toke
         ("solarized-dark", vec![cookie("theme", "solarized-dark")], None, "cookie theme"),
     ];
     for (value, cookies, st, what) in refused {
-        assert_match(&add_err(sent(value), cookies, st, Some(strs(&["ctx"]))), &format!(r"query:ctx holds the live {what}\."), what);
+        assert_match(&add_err("setting-refused", sent(value), cookies, st, Some(strs(&["ctx"]))).await, &format!(r"query:ctx holds the live {what}\."), what);
     }
+    assert_eq!(files_of("setting-refused"), before, "a refused add writes nothing");
 }
 
 /* --------------------------------------------- the text beside a param */
@@ -1095,4 +1146,47 @@ fn a_short_example_in_either_set_asks_whole_leaf_evidence_of_both() {
     let whole = |c: &str| vec![get(&format!("https://api.site.test/v1/top?country={c}&lang=en-{c}"))];
     let op = learn_operation(&two(whole("USA"), vec![json!({"q": "USA"}), json!({"q": "US"})], whole("US"))).unwrap().operation;
     assert_eq!(j(&op.slots), json!([{"param": "q", "at": ["query:country"]}]));
+}
+
+#[tokio::test]
+async fn add_checks_a_short_example_before_any_browser_run_and_learns_one_from_two_captures() {
+    let _ = &*HOME;
+    let capture = |c: &str| -> CaptureFile {
+        serde_json::from_value(json!({
+            "id": format!("slots-{c}"),
+            "at": iso_now(),
+            "url": format!("https://site.test/top?country={c}"),
+            "finalUrl": format!("https://site.test/top?country={c}"),
+            "exchanges": by_country(c),
+            "cookies": [],
+        }))
+        .unwrap()
+    };
+    let add = |examples: Vec<Value>, from: Option<FromCapture>, from2: Option<CaptureFile>| AddInput {
+        site: "slots".into(),
+        op: "top".into(),
+        trigger: Some(trigger("https://site.test/top?country={q}")),
+        examples: examples.into_iter().map(args).collect(),
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public: None,
+        from,
+        from2,
+        fetcher: None,
+    };
+    // no capture and no Chrome is reached: the check comes first
+    let e = add_operation(add(vec![json!({"q": "US"})], None, None)).await.err().expect("add refuses").to_string();
+    assert_match(&e, "at least 3 characters.*second example", "one short example");
+    let e = add_operation(add(vec![json!({"q": "US"}), json!({"q": "US"})], None, None)).await.err().expect("add refuses").to_string();
+    assert_match(&e, "at least 3 characters.*second example", "the same short example twice");
+    let r = add_operation(add(
+        vec![json!({"q": "US"}), json!({"q": "CA"})],
+        Some(FromCapture { capture: capture("US"), id: None }),
+        Some(capture("CA")),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(j(&r.operation.slots), json!([{"param": "q", "at": ["query:country"]}]));
 }

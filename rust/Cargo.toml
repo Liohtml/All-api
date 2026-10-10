@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+serde_path_to_error = "0.1"
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 fancy-regex = "0.14"

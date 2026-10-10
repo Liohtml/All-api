@@ -83,8 +83,15 @@ impl Browser {
         let opener = info.get("openerId").and_then(|t| t.as_str()).map(|s| s.to_string());
         match ev.method.as_str() {
             "Target.targetCreated" | "Target.targetInfoChanged" => {
-                if let (Some(t), Some(o)) = (target_id, opener) {
-                    self.inner.lock().unwrap().opener_of.insert(t, o);
+                let mut inner = self.inner.lock().unwrap();
+                if let (Some(t), Some(o)) = (&target_id, &opener) {
+                    inner.opener_of.insert(t.clone(), o.clone());
+                }
+                // where the tab is now, not where it was when it attached (about:blank for one this process opened)
+                if let (Some(t), Some(u)) = (&target_id, info.get("url").and_then(|u| u.as_str())) {
+                    if let Some(a) = inner.attached.get_mut(t) {
+                        a.url = u.to_string();
+                    }
                 }
             }
             "Target.attachedToTarget" => {
@@ -229,6 +236,16 @@ impl Browser {
             }
         }
         kin.into_iter().filter(|id| !held.contains(id) && inner.attached.contains_key(id)).collect()
+    }
+
+    /// The open pages (tabs) as the browser reported them, with their current URL.
+    pub fn pages(&self) -> Vec<Attached> {
+        self.inner.lock().unwrap().attached.values().cloned().collect()
+    }
+
+    /// How many tabs are on record as opened by another one; a closed tab leaves no record.
+    pub fn opener_records(&self) -> usize {
+        self.inner.lock().unwrap().opener_of.len()
     }
 
     pub async fn close_target(&self, target_id: &str) -> Result<()> {

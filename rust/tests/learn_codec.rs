@@ -1,20 +1,23 @@
 //! Port of test/edge/learn-codec.test.ts: edge cases for learning and codecs. Each test is a
-//! regression for a bug that was fixed. The `fillTrigger` / `addOperation` tests have no Rust
-//! counterpart yet (no heal module) and are left out.
+//! regression for a bug that was fixed.
 mod common;
 use api_anything::codec::{get_at, set_at, walk};
+use api_anything::heal::{AddInput, CaptureFile, FromCapture, add_operation, fill_trigger};
 use api_anything::http::build_request;
 use api_anything::learn::{LearnInput, Learned, learn_operation, matches};
 use api_anything::spec::{Match, Operation, Request, Trigger, parse_site};
 use api_anything::types::{Exchange, Headers};
-use api_anything::util::{b64_decode_lenient_str, b64_encode, search_of};
-use common::{args, cookie, enc, ex, j, no_session, session};
+use api_anything::util::{b64_decode_lenient_str, b64_encode, iso_now, search_of};
+use common::{Home, args, cookie, enc, ex, j, no_session, session};
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use url::Url;
 
 const MAC_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const SEC_CH_UA: &str = r#""Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140""#;
+
+static HOME: LazyLock<Home> = LazyLock::new(Home::new);
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -544,4 +547,76 @@ fn example_equal_to_the_endpoints_own_path_segment_binds_it_with_a_warning_docum
     let learned = learn(vec![get("https://s.test/api/search?q=search")], vec![json!({"q": "search"})]);
     assert!(learned.warnings.iter().any(|w| w.contains("2 places")));
     assert_eq!(pathname(&built(&learned.operation, json!({"q": "nasa"})).url), "/api/nasa");
+}
+
+#[test]
+fn a_trigger_url_template_percent_encodes_every_arg_including_and_emoji() {
+    let t = fill_trigger(&trigger("https://site.test/search?q={q}#tab={tab}"), &args(json!({"q": "a&b=c/d?e", "tab": "🚀 x"})));
+    assert_eq!(t.url, format!("https://site.test/search?q={}#tab={}", enc("a&b=c/d?e"), enc("🚀 x")));
+}
+
+/* ---------------------------------------------- add --from: trigger templatize */
+
+fn capture_file(url: &str, exchanges: Vec<Exchange>) -> CaptureFile {
+    serde_json::from_value(json!({
+        "id": format!("c{}", NEXT_ID.fetch_add(1, Ordering::SeqCst)),
+        "at": iso_now(),
+        "url": url,
+        "exchanges": exchanges,
+        "cookies": [],
+        "finalUrl": url,
+    }))
+    .unwrap()
+}
+
+/// `addOperation({ site, op: "search", examples, from: { capture } })`
+fn add_from(site: &str, examples: Vec<Value>, capture: CaptureFile) -> AddInput {
+    let _ = &*HOME;
+    AddInput {
+        site: site.into(),
+        op: "search".into(),
+        trigger: None,
+        examples: examples.into_iter().map(args).collect(),
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public: None,
+        from: Some(FromCapture { capture, id: None }),
+        from2: None,
+        fetcher: None,
+    }
+}
+
+#[tokio::test]
+async fn add_from_templatizes_a_capture_url_written_with_for_spaces() {
+    let url = "https://site.test/search?q=new+york";
+    let e = get("https://site.test/api/search?q=new+york");
+    let r = add_operation(add_from("edge-plus", vec![json!({"q": "new york"})], capture_file(url, vec![e]))).await.unwrap();
+    // A literal trigger makes every tier-3 run and recapture load the example's page, whatever the args.
+    assert_eq!(fill_trigger(&r.operation.trigger, &args(json!({"q": "boston"}))).url, "https://site.test/search?q=boston");
+}
+
+#[tokio::test]
+async fn add_from_templatizes_only_the_args_own_position_not_an_equal_path_segment_or_host() {
+    let url = "https://www.reddit.test/r/python/search?q=python";
+    let e = get("https://www.reddit.test/svc/search?q=python&sr=python");
+    let r = add_operation(add_from("edge-host", vec![json!({"q": "python"})], capture_file(url, vec![e]))).await.unwrap();
+    assert_eq!(fill_trigger(&r.operation.trigger, &args(json!({"q": "rust"}))).url, "https://www.reddit.test/r/python/search?q=rust");
+}
+
+#[tokio::test]
+async fn add_from_templatizes_a_20_encoded_capture_url_passes() {
+    let url = "https://site.test/search?q=new%20york";
+    let e = get("https://site.test/api/search?q=new%20york");
+    let r = add_operation(add_from("edge-pct", vec![json!({"q": "new york"})], capture_file(url, vec![e]))).await.unwrap();
+    assert_eq!(r.operation.trigger.url, "https://site.test/search?q={q}");
+}
+
+#[tokio::test]
+async fn add_from_templatizes_a_capture_url_whose_arg_differs_only_in_case_from_the_example() {
+    let url = "https://site.test/search?q=NASA";
+    let e = get("https://site.test/api/search?q=nasa");
+    let r = add_operation(add_from("edge-case", vec![json!({"q": "nasa"})], capture_file(url, vec![e]))).await.unwrap();
+    assert_eq!(r.operation.trigger.url, "https://site.test/search?q={q}");
 }

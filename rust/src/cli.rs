@@ -293,7 +293,12 @@ fn json_flag<T: serde::de::DeserializeOwned>(text: Option<&str>, flag: &str, com
     let Some(text) = text else { return Ok(None) };
     let why = |m: String| fail(format!("--{flag}: {}", one_line(&m)), format!("api-anything {command} --help shows --{flag}"));
     let v: Value = serde_json::from_str(text).map_err(|e| why(e.to_string()))?;
-    serde_json::from_value(v).map(Some).map_err(|e| why(format!("✖ {e}")))
+    // the schema's report says where the issue is, as zod's "→ at [0].selector" does
+    serde_path_to_error::deserialize(v).map(Some).map_err(|e| {
+        let path = e.path().to_string();
+        let at = if path == "." { String::new() } else { format!(" at {path}") };
+        why(format!("{}{at}", e.inner()))
+    })
 }
 
 /// --steps. An unknown action is named here, with the ones that exist.

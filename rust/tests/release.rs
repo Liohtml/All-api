@@ -1,15 +1,21 @@
-//! test/release.test.ts: the parts that exercise the library (learning, replay, judging). The
-//! add/heal/call-level and Chrome-driven tests have no Rust counterpart yet (no heal/execute module).
+//! test/release.test.ts: the parts that exercise the library (learning, replay, judging, add). The
+//! call-level and Chrome-driven tests have no Rust counterpart here.
 mod common;
 use api_anything::classify::{Class, Observed, judge};
+use api_anything::heal::{AddInput, CaptureFile, FromCapture, add_operation};
 use api_anything::http::build_request;
 use api_anything::learn::{LearnInput, Learned, learn_operation};
 use api_anything::session::Session;
 use api_anything::spec::Trigger;
+use api_anything::store::load_site;
 use api_anything::types::{Exchange, Headers};
-use common::{args, ex, site};
+use api_anything::util::iso_now;
+use common::{Home, args, ex, site};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
+use std::sync::LazyLock;
+
+static HOME: LazyLock<Home> = LazyLock::new(Home::new);
 
 const A: &str = "Zx81kLmN0pQrStUv2wXyZ3aBcD";
 const B: &str = "Ys92jKnM1qRsTuVw3xYzA4bCdE";
@@ -144,4 +150,40 @@ fn a_write_rejected_inside_an_http_200_response_is_not_success_and_is_never_retr
         Class::Ok
     );
     assert_eq!(judge(&op, &obs(204, "")).class, Class::Ok);
+}
+
+#[tokio::test]
+async fn add_refuses_to_save_a_spec_containing_a_credential_it_cannot_remove() {
+    let _ = &*HOME;
+    let token = "secret123"; // shorter than compound-token templating supports
+    let e = exchange(1, json!({"q": "kittens", "ctx": format!("prefix:{token}")}), json!({"results": ["kittens"]}));
+    let capture: CaptureFile = serde_json::from_value(json!({
+        "id": "test",
+        "at": iso_now(),
+        "url": "https://site.test/?q=kittens",
+        "finalUrl": "https://site.test/?q=kittens",
+        "exchanges": [e],
+        "cookies": [{ "name": "session", "value": token, "domain": "site.test", "path": "/", "expires": -1, "httpOnly": true, "secure": true }],
+    }))
+    .unwrap();
+    let err = add_operation(AddInput {
+        site: "secret".into(),
+        op: "search".into(),
+        trigger: None,
+        examples: vec![args(json!({"q": "kittens"}))],
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public: None,
+        from: Some(FromCapture { capture, id: Some(1) }),
+        from2: None,
+        fetcher: None,
+    })
+    .await
+    .err()
+    .expect("add refuses")
+    .to_string();
+    assert!(err.to_lowercase().contains("credential"), "{err}");
+    assert!(load_site("secret").unwrap().is_none());
 }

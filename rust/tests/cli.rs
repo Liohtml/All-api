@@ -36,6 +36,10 @@ fn chrome() -> bool {
     api_anything::browser::chrome_available()
 }
 
+/// The Chrome tests take turns, as node's sequential tests do: five browsers starting at once on a
+/// loaded machine time out on their first navigation.
+static CHROME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn re(pat: &str) -> Regex {
     Regex::new(pat).unwrap_or_else(|e| panic!("bad regex {pat}: {e}"))
 }
@@ -80,7 +84,8 @@ struct Out {
 
 impl Out {
     fn json(&self) -> Value {
-        serde_json::from_str(&self.stdout).unwrap_or_else(|e| panic!("stdout is not JSON ({e}): {:?}\nstderr: {}", self.stdout, self.stderr))
+        serde_json::from_str(&self.stdout)
+            .unwrap_or_else(|e| panic!("stdout is not JSON ({e}): {:?}\nstderr: {}", self.stdout, self.stderr))
     }
 }
 
@@ -123,7 +128,11 @@ impl Cli {
             cmd.env("API_ANYTHING_CHROME", c);
         }
         let o = cmd.output().await.expect("the api-anything binary runs");
-        Out { code: o.status.code().unwrap_or(1), stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned() }
+        Out {
+            code: o.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        }
     }
 
     /// `seed(id, capture)`: `{ id, at, finalUrl, cookies: JAR, ...capture }` under captures/.
@@ -223,9 +232,7 @@ fn shell_argv(hint: &str) -> Vec<String> {
     let command = command.unwrap_or_else(|| panic!("no command in: {hint}"));
     let out = std::process::Command::new("sh").arg("-c").arg(format!("set -- {command}; printf '%s\\0' \"$@\"")).output().unwrap();
     assert!(out.status.success(), "sh: {}", String::from_utf8_lossy(&out.stderr));
-    let words: Vec<String> = out.stdout.split(|b| *b == 0).filter(|w| !w.is_empty()).map(|w| String::from_utf8(w.to_vec()).unwrap()).collect();
-    assert_eq!(words.first().map(|w| w.as_str()), Some("api-anything"), "{hint}");
-    words[1..].to_vec()
+    out.stdout.split(|b| *b == 0).filter(|w| !w.is_empty()).map(|w| String::from_utf8(w.to_vec()).unwrap()).collect()
 }
 
 /* ------------------------------------------------------ flags and command names */
@@ -455,7 +462,8 @@ async fn seed_add_captures(cli: &Cli, f: &Fixture) {
             }),
         );
     }
-    let search = serde_json::to_string(&json!([[["search", serde_json::to_string(&json!(["kittens", 10])).unwrap(), null, "generic"]]])).unwrap();
+    let search =
+        serde_json::to_string(&json!([[["search", serde_json::to_string(&json!(["kittens", 10])).unwrap(), null, "generic"]]])).unwrap();
     cli.seed(
         "cpost",
         json!({
@@ -544,7 +552,10 @@ async fn the_capture_that_refusal_asks_for_repeats_how_the_first_was_made_write_
     );
 
     // the value in the URL, a soft navigation, and a quote for the shell to trip on
-    cli.seed("csoft", json!({ "url": format!("{}/spa/alice?tab=posts", f.url), "softFrom": format!("{}/spa/home", f.url), "exchanges": [] }));
+    cli.seed(
+        "csoft",
+        json!({ "url": format!("{}/spa/alice?tab=posts", f.url), "softFrom": format!("{}/spa/home", f.url), "exchanges": [] }),
+    );
     assert_eq!(
         shell_argv(&refused("csoft", flags(&["--example", "name=alice", "--example2", "name=bob o'neil"])).await),
         vec![
@@ -921,7 +932,9 @@ async fn what_the_op_holds_public_was_said_of_the_value_it_was_learned_with_not_
         },
     });
     cli.seed("cshipped", json!({ "url": format!("{}/page", f.url), "cookies": [], "exchanges": [script, keyed(shipped)] }));
-    let first = cli.run(&["add", "fixture", "shipped", "--from", "cshipped", "--pick-request", "2", "--example", "name=alice", "--extract", "data"]).await;
+    let first = cli
+        .run(&["add", "fixture", "shipped", "--from", "cshipped", "--pick-request", "2", "--example", "name=alice", "--extract", "data"])
+        .await;
     assert_eq!(first.code, 0, "{}", first.stdout);
     let op = || {
         let spec: Value = serde_json::from_str(&saved(&cli)).unwrap();
@@ -947,10 +960,16 @@ async fn a_value_the_session_store_still_holds_is_a_credential_though_the_ops_re
     seed_add_captures(&cli, &f).await;
     let (first, rotated) = ("OriginalStoredSecretAbc12345", "RotatedStoredSecretZyx98765");
     let opaque = |value: &str| with_header(&lookup(&f, "/api/rotated?name=alice", None), "x-opaque", value);
-    cli.seed("cfirst", json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "oldStorage": first }, "exchanges": [opaque(first)] }));
+    cli.seed(
+        "cfirst",
+        json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "oldStorage": first }, "exchanges": [opaque(first)] }),
+    );
     assert_eq!(add_from(&cli, "rotated", "cfirst", &["--example", "name=alice", "--extract", "data"]).await.0.code, 0);
     // the page now keeps another value under another key, and sends that one
-    cli.seed("csecond", json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "newStorage": rotated }, "exchanges": [opaque(rotated)] }));
+    cli.seed(
+        "csecond",
+        json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "newStorage": rotated }, "exchanges": [opaque(rotated)] }),
+    );
     for secret in [first, rotated] {
         for flags in [vec!["--description", secret], vec!["--extract", "data", "--pick", secret]] {
             let (r, out) = add_from(&cli, "rotated", "csecond", &flags).await;
@@ -1015,11 +1034,17 @@ async fn adding_an_op_again_from_its_own_request_refreshes_the_session_value_its
         let session: Value = serde_json::from_str(&cli.read("sessions/fixture.json")).unwrap();
         session["values"].as_object().unwrap().values().map(s).collect()
     };
-    cli.seed("cref", json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "opaque": first }, "exchanges": [opaque(first)] }));
+    cli.seed(
+        "cref",
+        json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "opaque": first }, "exchanges": [opaque(first)] }),
+    );
     assert_eq!(add_from(&cli, "reffed", "cref", &["--example", "name=alice", "--extract", "data"]).await.0.code, 0);
     assert!(stored().iter().any(|v| v == first));
     // the same request, sending the value the page holds now
-    cli.seed("cref2", json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "opaque": next }, "exchanges": [opaque(next)] }));
+    cli.seed(
+        "cref2",
+        json!({ "url": format!("{}/page", f.url), "cookies": [], "storage": { "opaque": next }, "exchanges": [opaque(next)] }),
+    );
     assert_eq!(add_from(&cli, "reffed", "cref2", &["--extract", "data", "--pick", "name"]).await.0.code, 0);
     assert!(stored().iter().any(|v| v == next) && !stored().iter().any(|v| v == first), "the ref now holds what the request sent");
     for value in [first, next] {
@@ -1088,7 +1113,21 @@ async fn a_request_a_write_capture_aborted_is_learned_as_a_write_or_not_at_all_w
     // as the second capture of a pair, the request the diff reads from it decides, not how it was captured:
     // the answered search is a read there too
     let pair = cli
-        .run(&["add", "demo", "search2", "--from", "cpost", "--pick-request", "3", "--example", "q=kittens", "--from2", "cpost", "--example2", "q=kittens"])
+        .run(&[
+            "add",
+            "demo",
+            "search2",
+            "--from",
+            "cpost",
+            "--pick-request",
+            "3",
+            "--example",
+            "q=kittens",
+            "--from2",
+            "cpost",
+            "--example2",
+            "q=kittens",
+        ])
         .await;
     assert_eq!(pair.code, 0, "{}", pair.stdout);
     assert_eq!(pair.json()["readOnly"], json!(true));
@@ -1102,7 +1141,8 @@ async fn a_request_a_write_capture_aborted_is_learned_as_a_write_or_not_at_all_w
             if e["id"] == json!(2) {
                 let mut e = e.clone();
                 e.as_object_mut().unwrap().remove("aborted");
-                e["response"] = json!({ "status": 200, "headers": {}, "contentType": "application/json", "body": r#"{"data":{"ok":true}}"# });
+                e["response"] =
+                    json!({ "status": 200, "headers": {}, "contentType": "application/json", "body": r#"{"data":{"ok":true}}"# });
                 e
             } else {
                 e.clone()
@@ -1111,13 +1151,34 @@ async fn a_request_a_write_capture_aborted_is_learned_as_a_write_or_not_at_all_w
         .collect();
     cli.seed("csent", json!({ "url": first["url"], "steps": first["steps"], "exchanges": sent }));
     let held = cli
-        .run(&["add", "demo", "post2", "--from", "csent", "--pick-request", "2", "--example", "text=hello alice", "--from2", "cpost", "--example2", "text=hello alice"])
+        .run(&[
+            "add",
+            "demo",
+            "post2",
+            "--from",
+            "csent",
+            "--pick-request",
+            "2",
+            "--example",
+            "text=hello alice",
+            "--from2",
+            "cpost",
+            "--example2",
+            "text=hello alice",
+        ])
         .await;
     assert_eq!(held.code, 1, "{}", held.stdout);
     assert_match!(s(&held.json()["error"]), r"cpost .*intercepted request 2 as a write.*--write");
     // and one it intercepted that the diff does not read decides nothing: the answered search is read,
     // a search with other args that was held back is beside the point
-    let form = |q: &str| format!("f.req={}", encode_uri_component(&serde_json::to_string(&json!([[["search", serde_json::to_string(&json!([q, 10])).unwrap(), null, "generic"]]])).unwrap()));
+    let form = |q: &str| {
+        format!(
+            "f.req={}",
+            encode_uri_component(
+                &serde_json::to_string(&json!([[["search", serde_json::to_string(&json!([q, 10])).unwrap(), null, "generic"]]])).unwrap()
+            )
+        )
+    };
     let mut other = answered(&f, 2, "xhr", "/api/rpc?rpcids=search", None, Some(&form("unrelated"))).await;
     other.as_object_mut().unwrap().remove("response");
     other["aborted"] = json!(true);
@@ -1130,7 +1191,21 @@ async fn a_request_a_write_capture_aborted_is_learned_as_a_write_or_not_at_all_w
         }),
     );
     let beside = cli
-        .run(&["add", "demo", "search3", "--from", "cpost", "--pick-request", "3", "--example", "q=kittens", "--from2", "cpups", "--example2", "q=puppies"])
+        .run(&[
+            "add",
+            "demo",
+            "search3",
+            "--from",
+            "cpost",
+            "--pick-request",
+            "3",
+            "--example",
+            "q=kittens",
+            "--from2",
+            "cpups",
+            "--example2",
+            "q=puppies",
+        ])
         .await;
     assert_eq!(beside.code, 0, "{}", beside.stdout);
     assert_eq!(beside.json()["readOnly"], json!(true));
@@ -1181,7 +1256,11 @@ async fn a_write_stays_a_write_learning_it_again_to_fix_its_recipe_too_is_refuse
     let again = AddInput {
         site: "demo".into(),
         op: "send".into(),
-        trigger: Some(Trigger { url: format!("{}/compose", f.url), steps: Some(serde_json::from_value(steps("{text}")).unwrap()), soft_from: None }),
+        trigger: Some(Trigger {
+            url: format!("{}/compose", f.url),
+            steps: Some(serde_json::from_value(steps("{text}")).unwrap()),
+            soft_from: None,
+        }),
         examples: vec![common::args(json!({ "text": "hello alice" }))],
         matcher: None,
         write: false,
@@ -1204,6 +1283,7 @@ async fn capture(cli: &Cli, f: &Fixture, path: &str, flags: &[&str]) -> Value {
     let mut argv = vec!["capture", &url];
     argv.extend(flags);
     let r = cli.run(&argv).await;
+    eprintln!("capture {path}: {}{}", r.stdout, r.stderr);
     r.json()
 }
 
@@ -1217,6 +1297,7 @@ async fn sign_in_page_takes_a_login_path_and_a_sign_in_form_on_it_asked_for_or_r
         eprintln!("Google Chrome not installed: skipped");
         return;
     }
+    let _turn = CHROME.lock().await;
     let f = Fixture::start().await;
     let cli = Cli::new();
     for path in ["/account", "/signin"] {
@@ -1237,6 +1318,7 @@ async fn example_values_that_no_candidate_returned_on_a_page_with_a_sign_in_form
         eprintln!("Google Chrome not installed: skipped");
         return;
     }
+    let _turn = CHROME.lock().await;
     let f = Fixture::start().await;
     let cli = Cli::new();
     let next = s(&capture(&cli, &f, "/private", &["--example", "name=alice"]).await["next"]);
@@ -1251,6 +1333,7 @@ async fn login_wording_with_no_sign_in_form_on_the_page_adds_nothing_to_the_reco
         eprintln!("Google Chrome not installed: skipped");
         return;
     }
+    let _turn = CHROME.lock().await;
     let f = Fixture::start().await;
     let cli = Cli::new();
     let next = s(&capture(&cli, &f, "/notice", &["--example", "name=zelda"]).await["next"]);
@@ -1264,14 +1347,15 @@ async fn a_sign_in_form_with_nothing_to_say_the_data_is_missing_is_said_beside_t
         eprintln!("Google Chrome not installed: skipped");
         return;
     }
+    let _turn = CHROME.lock().await;
     let f = Fixture::start().await;
     let cli = Cli::new();
     let pages: [(&str, &[&str]); 5] = [
-        ("/private", &[]),                                 // a login page served in place, but no example to miss
-        ("/card/alice", &[]),                              // public data in the page's state JSON, under a login box
-        ("/catalog", &[]),                                 // a public listing that sits inside the search form
-        ("/community", &[]),                               // a redirect, to a public page with a login box
-        ("/forum/alice", &["--example", "name=alice"]),    // the example is in a JSON request's answer, not in the page
+        ("/private", &[]),                              // a login page served in place, but no example to miss
+        ("/card/alice", &[]),                           // public data in the page's state JSON, under a login box
+        ("/catalog", &[]),                              // a public listing that sits inside the search form
+        ("/community", &[]),                            // a redirect, to a public page with a login box
+        ("/forum/alice", &["--example", "name=alice"]), // the example is in a JSON request's answer, not in the page
     ];
     for (path, flags) in pages {
         let next = s(&capture(&cli, &f, path, flags).await["next"]);
@@ -1287,6 +1371,7 @@ async fn an_http_error_is_a_dead_end_only_when_the_erroring_page_is_itself_the_b
         eprintln!("Google Chrome not installed: skipped");
         return;
     }
+    let _turn = CHROME.lock().await;
     let f = Fixture::start().await;
     let cli = Cli::new();
     let gone = s(&capture(&cli, &f, "/no/such/page", &[]).await["next"]);

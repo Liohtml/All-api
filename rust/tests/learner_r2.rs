@@ -1,22 +1,24 @@
 //! Port of test/edge/learner-r2.test.ts: round-2 regressions for the learner. Location echoes,
-//! beacons, credentials under any name or encoding, flag binding. The rescan, concurrent-add,
-//! trigger-templating and browser tests need the heal/execute modules, which the Rust crate does
-//! not have yet, and are left out.
+//! beacons, credentials under any name or encoding, rescan association, flag binding, concurrent
+//! spec writes and trigger templating. The one browser test (web storage) is left out.
 mod common;
-use api_anything::http::build_request;
+use api_anything::heal::{AddInput, CaptureFile, FromCapture, add_operation, put_operation, rescan, templatize_url};
+use api_anything::http::{Fetcher, HttpRequest, HttpResponse, SharedFetcher, build_request};
 use api_anything::learn::{LearnInput, Learned, learn_operation};
 use api_anything::secrets::scan_secrets;
 use api_anything::session::Session;
 use api_anything::spec::{Match, Operation, Request, Trigger};
-use api_anything::store::{export_site, save_site};
-use api_anything::types::{Exchange, StoredCookie};
-use api_anything::util::{b64_encode, b64url_encode};
+use api_anything::store::{export_site, load_site, save_site, update_site};
+use api_anything::types::{Exchange, Headers, StoredCookie};
+use api_anything::util::{b64_encode, b64url_encode, iso_now};
 use common::{Home, args, enc, ex, j, no_session, site};
+use futures_util::future::BoxFuture;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use url::Url;
 
 static HOME: LazyLock<Home> = LazyLock::new(Home::new);
@@ -435,4 +437,156 @@ fn a_boolean_example_never_binds_to_a_lone_flag_under_another_key() {
     let own = post_json("https://api.site.test/gql", &[], json!({"variables": {"screen_name": "nasa", "includeReplies": true}}));
     let op = learn(vec![own], vec![json!({"screen_name": "nasa", "includeReplies": true})]).operation;
     assert_eq!(op.slots.iter().find(|s| s.param.as_deref() == Some("includeReplies")).map(|s| s.at.clone()), Some(vec!["body".to_string(), "json:/variables/includeReplies".to_string()]));
+}
+
+/* ---------------------------------------------- HEAL-2/3: rescan variants */
+
+/// The TS `fetchImpl` closures: a fetcher that answers from memory.
+struct FnFetcher(Arc<dyn Fn(&HttpRequest) -> HttpResponse + Send + Sync>);
+
+impl Fetcher for FnFetcher {
+    fn fetch(&self, req: HttpRequest, _timeout: Duration) -> BoxFuture<'_, anyhow::Result<HttpResponse>> {
+        let r = (self.0)(&req);
+        Box::pin(async move { Ok(r) })
+    }
+}
+
+fn fetch_impl(f: impl Fn(&HttpRequest) -> HttpResponse + Send + Sync + 'static) -> SharedFetcher {
+    Arc::new(FnFetcher(Arc::new(f)))
+}
+
+/// `new Response(body, { status, headers: { "content-type": ... } })`; a bare `new Response(text)` is text/plain.
+fn response(status: u16, content_type: &str, body: &str) -> HttpResponse {
+    let mut headers = Headers::new();
+    headers.insert("content-type".into(), content_type.into());
+    HttpResponse { status, headers, set_cookie: vec![], body: body.as_bytes().to_vec(), url: String::new() }
+}
+
+/// The `run(bundle, readOnly)` of the "rescan associates the token with the anchor's own module" describe.
+async fn rescan_run(bundle: &str, read_only: bool) -> Option<String> {
+    let _ = &*HOME;
+    let bundle = bundle.to_string();
+    let fetcher = fetch_impl(move |req: &HttpRequest| {
+        if req.url.ends_with("/app.js") {
+            response(200, "text/plain;charset=UTF-8", &bundle)
+        } else {
+            response(200, "text/plain;charset=UTF-8", "<html><script src=\"/app.js\"></script></html>")
+        }
+    });
+    let op = site(json!({
+        "name": "s",
+        "baseUrl": "https://s.example",
+        "operations": [{
+            "name": "q",
+            "readOnly": read_only,
+            "request": { "method": "POST", "url": "https://s.example/graphql/query", "headers": {}, "body": format!("doc_id={}&fb_api_req_friendly_name=ProfileQuery", "1".repeat(16)) },
+            "volatile": [{ "at": ["form:doc_id"], "shape": { "charset": "digits", "length": 16 }, "anchor": "ProfileQuery" }],
+            "trigger": { "url": "https://s.example/p" },
+        }],
+    }))
+    .operations
+    .remove(0);
+    rescan("s", &op, &args(json!({})), Some(fetcher)).await.unwrap().map(|r| r.diff.split("-> ").nth(1).unwrap().to_string())
+}
+
+const DOC_A: &str = "2222222222222222";
+const DOC_B: &str = "3333333333333333";
+const DOC_C: &str = "4444444444444444";
+
+#[tokio::test]
+async fn rescan_associates_the_token_with_the_anchors_own_module_meta_modules_with_use_strict_inside() {
+    let bundle = format!(
+        "__d(\"FeedQuery_instagramRelayOperation\",[],(function(a,b,c,d,e,f){{\"use strict\";e.exports=\"{DOC_A}\"}}),null);__d(\"ProfileQuery_instagramRelayOperation\",[],(function(a,b,c,d,e,f){{\"use strict\";e.exports=\"{DOC_B}\"}}),null);"
+    );
+    assert_eq!(rescan_run(&bundle, true).await.as_deref(), Some(DOC_B));
+    assert_eq!(rescan_run(&bundle, false).await.as_deref(), Some(DOC_B));
+}
+
+#[tokio::test]
+async fn rescan_associates_the_token_with_the_anchors_own_module_the_anchor_also_named_in_another_statement_a_log_message_next_to_another_id()
+ {
+    let bundle = format!(
+        "log(\"ProfileQuery failed\",{{doc:\"{DOC_C}\"}});__d(\"ProfileQuery_instagramRelayOperation\",[],(function(a,b,c,d,e,f){{e.exports=\"{DOC_B}\"}}),null);"
+    );
+    assert_eq!(rescan_run(&bundle, true).await.as_deref(), Some(DOC_B));
+    assert_eq!(rescan_run(&bundle, false).await.as_deref(), Some(DOC_B));
+}
+
+#[tokio::test]
+async fn rescan_associates_the_token_with_the_anchors_own_module_an_array_of_records_id_first_the_anchors_own_record() {
+    assert_eq!(
+        rescan_run(
+            &format!(
+                "[{{id:\"{DOC_A}\",name:\"FeedQuery\"}},{{id:\"{DOC_B}\",name:\"ProfileQuery\"}},{{id:\"{DOC_C}\",name:\"StoryQuery\"}}]"
+            ),
+            true
+        )
+        .await
+        .as_deref(),
+        Some(DOC_B)
+    );
+}
+
+/* ----------------------------------------------- EC-19: concurrent writes */
+
+#[tokio::test]
+async fn an_add_saves_under_the_site_lock_with_a_fresh_read_so_a_concurrent_adds_op_survives() {
+    let _ = &*HOME;
+    // Run 1 and run 2 differ in a nonce, so add replays the template once (an await) before saving;
+    // another add lands during that replay.
+    let capture = |q: &str, nonce: &str| -> CaptureFile {
+        let url = format!("https://site.test/search?q={q}");
+        serde_json::from_value(json!({
+            "id": format!("c{}", NEXT_ID.fetch_add(1, Ordering::SeqCst)),
+            "at": iso_now(),
+            "url": url,
+            "exchanges": [get(&format!("https://site.test/api/search?q={q}&n={nonce}"))],
+            "cookies": [],
+            "finalUrl": url,
+        }))
+        .unwrap()
+    };
+    let mut i = input(vec![get("https://site.test/api/user?name=alice")], vec![json!({"name": "alice"})]);
+    i.name = "user".into();
+    let other: Operation = learn_operation(&i).unwrap().operation;
+    let fetcher = fetch_impl(move |_req: &HttpRequest| {
+        let o = other.clone();
+        update_site("race", move |s| {
+            Ok(put_operation(&s.unwrap_or_else(|| site(json!({"name": "race", "baseUrl": "https://site.test", "operations": []}))), o))
+        })
+        .unwrap();
+        response(200, "application/json", &json!({"results": [{"id": 1}, {"id": 2}]}).to_string())
+    });
+    let r = add_operation(AddInput {
+        site: "race".into(),
+        op: "search".into(),
+        trigger: None,
+        examples: vec![args(json!({"q": "hello"})), args(json!({"q": "world"}))],
+        matcher: None,
+        write: false,
+        description: None,
+        response: None,
+        public: None,
+        from: Some(FromCapture { capture: capture("hello", "Zq81kPq0aB3dF7"), id: None }),
+        from2: Some(capture("world", "Mm4nR7sT1uV5wX")),
+        fetcher: Some(fetcher),
+    })
+    .await
+    .unwrap();
+    assert!(!r.replaced);
+    let mut names: Vec<String> = load_site("race").unwrap().unwrap().site.operations.iter().map(|o| o.name.clone()).collect();
+    names.sort();
+    assert_eq!(names, vec!["search", "user"]);
+}
+
+/* ------------------------------------------------- LC-02: trigger template */
+
+#[test]
+fn a_value_equal_to_a_path_segment_and_to_a_query_value_under_another_key_templates_both() {
+    assert_eq!(templatize_url("https://s.test/u/nasa?tab=nasa", &args(json!({"name": "nasa"}))), "https://s.test/u/{name}?tab={name}");
+    assert_eq!(
+        templatize_url("https://s.test/r/python/search?q=python", &args(json!({"q": "python"}))),
+        "https://s.test/r/python/search?q={q}",
+        "a key named like the param is its position"
+    );
 }

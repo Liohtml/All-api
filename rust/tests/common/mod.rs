@@ -38,13 +38,7 @@ pub fn cookie(name: &str, value: &str, domain: &str) -> StoredCookie {
 }
 
 pub fn session(cookies: Vec<StoredCookie>, values: &[(&str, &str)]) -> Session {
-    Session::with(
-        cookies,
-        values
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-    )
+    Session::with(cookies, values.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
 }
 
 pub fn no_session() -> Session {
