@@ -1367,7 +1367,9 @@ struct HopAnswer {
 
 /// A page on `origin` to fetch from: its root, or a blank stand-in when the root redirects elsewhere.
 async fn origin_page(browser: &Arc<Browser>, origin: &str, left: Duration) -> Result<Arc<Page>> {
-    if let Some(p) = browser.inner.lock().unwrap().origin_pages.get(origin).cloned() {
+    // the guard is released before is_closed() takes the same lock
+    let kept = browser.inner.lock().unwrap().origin_pages.get(origin).cloned();
+    if let Some(p) = kept {
         if !p.is_closed() {
             return Ok(p);
         }
