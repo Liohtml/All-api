@@ -1,0 +1,12 @@
+[
+  {
+    "cmd": "api-anything add hn-demo links --trigger 'https://news.ycombinator.com/from?site={domain}' --example domain=github.com --example2 domain=github.io --match path=/from --html '{\"items\":\"tr.athing\",\"fields\":{\"title\":\".titleline > a\",\"url\":\".titleline > a@href\"}}' | jq -C '{ok, request, params, preview}'",
+    "out": "\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"ok\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39mtrue\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"request\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"GET https://news.ycombinator.com/from\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"params\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[1;39m[\n    \u001b[0;32m\"domain:string\"\u001b[0m\u001b[1;39m\n  \u001b[1;39m]\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"preview\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[1;39m{\n    \u001b[0m\u001b[34;1m\"count\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m30\u001b[0m\u001b[1;39m,\n    \u001b[0m\u001b[34;1m\"first\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[1;39m{\n      \u001b[0m\u001b[34;1m\"title\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"Blackcat – Yet Another Personal Agent\"\u001b[0m\u001b[1;39m,\n      \u001b[0m\u001b[34;1m\"url\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"https://github.com/vpuna/blackcat\"\u001b[0m\u001b[1;39m\n    \u001b[1;39m}\u001b[0m\u001b[1;39m\n  \u001b[1;39m}\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m",
+    "ms": 7135
+  },
+  {
+    "cmd": "api-anything call hn-demo links domain=arxiv.org | jq -C '{ok, tier, ms, stories: (.data | length), first: .data[0]}'",
+    "out": "\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"ok\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39mtrue\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"tier\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m1\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"ms\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m594\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"stories\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m30\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"first\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[1;39m{\n    \u001b[0m\u001b[34;1m\"title\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"Kronos: A Foundation Model for the Language of Financial Markets\"\u001b[0m\u001b[1;39m,\n    \u001b[0m\u001b[34;1m\"url\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"https://arxiv.org/abs/2508.02739\"\u001b[0m\u001b[1;39m\n  \u001b[1;39m}\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m",
+    "ms": 602
+  }
+]

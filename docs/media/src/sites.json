@@ -1,0 +1,13 @@
+[
+{
+  "cmd": "api-anything sites | jq -r '.[] | \"\\(.name)\\t\\(.operations) ops\\t\\(.description | split(\". \")[0] | .[:64])\"' | expand -t 18,26",
+  "out": "airbnb            1 ops   Airbnb stay search\namazon            1 ops   Amazon.com product search\ngoodreads         5 ops   Goodreads books, logged out: search, book details, an author's b\ngoogle-flights    3 ops   Logged-out one-way flight search and a cheapest-date price calen\nhacker-news       2 ops   Hacker News front page (HTML) and story search via the Algolia i\ninstagram         2 ops   Public Instagram profiles, logged out: profile details and the 1\nlinkedin          5 ops   LinkedIn read operations over the Voyager API: your own mini pro\nx                 2 ops   Public X (Twitter) profiles by screen name, logged out: full pro\nyoutube           1 ops   YouTube video search, from the results page",
+  "ms": 31
+}
+,
+{
+  "cmd": "api-anything ops goodreads | jq -C '.operations[:3][] | {name, params: .params[0], returns: (.returns | join(\", \"))}'",
+  "out": "\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"name\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"searchBooks\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"params\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"q:string (title or author words, e.g. \\\"piranesi\\\"; e.g. \\\"hyperion\\\")\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"returns\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"bookId, title, author, authorId, avgRating, ratingsCount\"\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m\n\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"name\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"getBook\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"params\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"bookId:string (Goodreads book id, from searchBooks; e.g. \\\"77566\\\"; a numeric Goodreads book id, e.g. 35959740)\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"returns\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"title, author, authorUrl, avgRating, ratingsCount, pages, firstPublished, genres, description\"\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m\n\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"name\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"getReviews\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"params\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"workId:string (work id from getWorkId, e.g. kca://work/amzn1.gr.work.v1....; e.g. \\\"kca://work/amzn1.gr.work.v1.xIT2_7WWJ119Me44O0dVMg\\\")\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"returns\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"reviewer, rating, text\"\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m",
+  "ms": 13
+}
+]

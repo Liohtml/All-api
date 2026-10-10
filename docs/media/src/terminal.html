@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0d1117;
+    --window: #161b22;
+    --border: #30363d;
+    --fg: #d7dae0;
+    --dim: #7f848e;
+    --green: #98c379;
+    --blue: #61afef;
+    --yellow: #e5c07b;
+    --purple: #c678dd;
+  }
+  html, body { margin: 0; background: var(--bg); }
+  body {
+    width: 1180px; height: 720px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 20% -10%, #1a2a3d 0%, var(--bg) 60%);
+    font-family: "DejaVu Sans Mono", "Liberation Mono", Menlo, monospace;
+  }
+  .window {
+    width: 1100px; height: 660px; border-radius: 12px; background: var(--window);
+    border: 1px solid var(--border); box-shadow: 0 30px 80px rgba(0,0,0,.55);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .bar {
+    height: 38px; display: flex; align-items: center; padding: 0 14px; gap: 8px;
+    background: #1c2129; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--dim); position: relative;
+  }
+  .bar .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .bar .title { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+  #screen {
+    flex: 1; padding: 16px 20px; overflow: hidden; font-size: 15px; line-height: 1.45; color: var(--fg);
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .line { white-space: pre-wrap; }
+  .prompt { color: var(--green); font-weight: 600; }
+  .prog { color: #ffffff; }
+  .sub { color: var(--yellow); }
+  .flag { color: var(--blue); }
+  .str { color: var(--green); }
+  .pipe { color: var(--purple); }
+  .dim { color: var(--dim); }
+  .time { color: var(--dim); font-size: 12px; margin: 0 0 8px; }
+  pre.out { margin: 2px 0 0; font: inherit; white-space: pre-wrap; }
+  /* stills: the window grows with its content */
+  body.auto { height: auto; padding: 30px 0; }
+  body.auto .window { height: auto; }
+  body.auto #screen { overflow: visible; }
+  .cursor { display: inline-block; width: 9px; height: 17px; background: var(--fg); vertical-align: -3px; margin-left: 1px; opacity: .9; }
+</style>
+</head>
+<body>
+  <div class="window">
+    <div class="bar">
+      <span class="dot" style="background:#ff5f57"></span>
+      <span class="dot" style="background:#febc2e"></span>
+      <span class="dot" style="background:#28c840"></span>
+      <span class="title">api-anything — teach once, call like an API</span>
+    </div>
+    <div id="screen"></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,2 @@
+api-anything sites | jq -r '.[] | "\(.name)\t\(.operations) ops\t\(.description | split(". ")[0] | .[:64])"' | expand -t 18,26
+api-anything ops goodreads | jq -C '.operations[:3][] | {name, params: .params[0], returns: (.returns | join(", "))}'
