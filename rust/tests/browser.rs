@@ -238,7 +238,12 @@ fn t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_
             let mut o = TriggerOptions::new(&format!("{}/spa/{name}", fx.url), &profile());
             o.soft_from = Some(format!("{}/spa/alice", fx.url));
             let r = run_trigger(o).await.unwrap();
-            assert_eq!(r.exchanges.iter().filter(|e| e.resource_type == "document").count(), 1, "{name}: no second page load");
+            assert_eq!(
+                r.exchanges.iter().filter(|e| e.resource_type == "document").count(),
+                1,
+                "{name}: no second page load: {:?}",
+                r.exchanges.iter().map(|e| (e.resource_type.clone(), e.request.url.clone(), e.status())).collect::<Vec<_>>()
+            );
             assert!(
                 r.exchanges.iter().any(|e| e.request.url.ends_with(&format!("/api/spa/user?name={name}"))),
                 "{name}: the route's XHR fired"

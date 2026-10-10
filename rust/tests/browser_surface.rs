@@ -1486,6 +1486,10 @@ impl McpClient {
     fn pid(&self) -> i32 {
         self.child.id().unwrap() as i32
     }
+    /// `!alive(pid)` for a child this test holds: a child nobody has waited for stays a zombie that still answers `kill(pid, 0)`.
+    fn exited(&mut self) -> bool {
+        self.child.try_wait().map(|s| s.is_some()).unwrap_or(true)
+    }
     /// `client.close()`: the transport goes away (stdin closed, then the process waited for).
     async fn close(mut self) {
         drop(self.stdin.take());
@@ -1666,10 +1670,14 @@ fn the_mcp_server_exits_on_sigterm_once_it_has_launched_chrome() {
         let fx = fx().await;
         close_browser().await;
         write_spec(fx, two_process_ops(fx), "edge");
-        let client = mcp_holding_chrome().await;
-        let pid = client.pid();
-        kill(pid, libc::SIGTERM);
-        let gone = until(|| !alive(pid), 5000).await;
+        let mut client = mcp_holding_chrome().await;
+        kill(client.pid(), libc::SIGTERM);
+        let end = Instant::now() + Duration::from_millis(5000);
+        let mut gone = client.exited();
+        while !gone && Instant::now() < end {
+            sleep(100).await;
+            gone = client.exited();
+        }
         client.close().await;
         assert!(gone, "server still running 5 s after SIGTERM");
     });
