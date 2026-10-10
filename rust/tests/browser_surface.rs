@@ -830,19 +830,6 @@ fn once_the_user_has_signed_in_that_tier_3_read_answers_the_logged_out_run_must_
         assert_eq!(logged_out.class, api_anything::classify::Class::Auth, "{}", j(&logged_out));
         // what `api-anything login` leaves behind
         add_cookies_to_profile(&[StoredCookie::new("sid", "signed-in-session-1234", "127.0.0.1")], &profile_dir()).await.unwrap();
-        {
-            let _h = hold();
-            let b = open_browser(&profile_dir(), true).await.unwrap();
-            eprintln!("DEBUG cookies after add: {:?}", b.all_cookies().await.unwrap());
-            let p = b.new_page(None).await.unwrap();
-            let r = p.send("Storage.setCookies", json!({ "cookies": [{ "name": "sid2", "value": "v", "domain": "127.0.0.1", "path": "/" }] })).await;
-            eprintln!("DEBUG setCookies domain only: {r:?} -> {:?}", b.all_cookies().await.unwrap());
-            let r = p.send("Storage.setCookies", json!({ "cookies": [{ "name": "sid3", "value": "v", "url": "http://127.0.0.1/", "path": "/" }] })).await;
-            eprintln!("DEBUG setCookies url: {r:?} -> {:?}", b.all_cookies().await.unwrap());
-            let r = p.send("Network.setCookie", json!({ "name": "sid4", "value": "v", "domain": "127.0.0.1", "path": "/" })).await;
-            eprintln!("DEBUG Network.setCookie domain: {r:?} -> {:?}", b.all_cookies().await.unwrap());
-            let _ = p.close().await;
-        }
         let r = call("edge", "members", args(json!({ "name": "zed" })), fast()).await;
         assert!(r.ok, "{}; stale={:?}", j(&r), stale_mark("edge", "members", now_ms()));
         assert_eq!(r.data, Some(json!({ "name": "zed", "followers": 300 })));

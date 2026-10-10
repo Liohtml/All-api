@@ -79,13 +79,19 @@ impl Site {
 }
 
 fn page(body: &str, status: u16) -> (u16, Vec<(String, String)>, String) {
-    (status, vec![("content-type".into(), "text/html; charset=utf-8".into())], format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body>{body}</body></html>"))
+    (
+        status,
+        vec![("content-type".into(), "text/html; charset=utf-8".into())],
+        format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body>{body}</body></html>"),
+    )
 }
 
 fn route(path: &str, query: &HashMap<String, String>, cookie: &str) -> (u16, Vec<(String, String)>, String) {
     match path {
         "/pop" => page(r#"<button id="popupws" onclick="window.open('/chat2')">chat</button>"#, 200),
-        "/chat2" => page(r#"<script>const ws=new WebSocket("ws://"+location.host+"/ws");ws.onopen=()=>ws.send("a private message")</script>"#, 200),
+        "/chat2" => {
+            page(r#"<script>const ws=new WebSocket("ws://"+location.host+"/ws");ws.onopen=()=>ws.send("a private message")</script>"#, 200)
+        }
         "/hotels" => {
             // AWS WAF-style interstitial that takes a while to solve, then reloads with its token cookie
             let delay = query.get("delay").map(|s| s.as_str()).unwrap_or("2500");
@@ -98,7 +104,13 @@ fn route(path: &str, query: &HashMap<String, String>, cookie: &str) -> (u16, Vec
                     ),
                 );
             }
-            page(&format!(r#"<div class="card">{} hotel</div><script>fetch("/api/list")</script>"#, query.get("q").map(|s| s.as_str()).unwrap_or("null")), 200)
+            page(
+                &format!(
+                    r#"<div class="card">{} hotel</div><script>fetch("/api/list")</script>"#,
+                    query.get("q").map(|s| s.as_str()).unwrap_or("null")
+                ),
+                200,
+            )
         }
         "/api/list" => (200, vec![("content-type".into(), "application/json".into())], r#"{"items":[1,2]}"#.into()),
         _ => (404, vec![], String::new()),
@@ -126,12 +138,15 @@ async fn serve(mut sock: tokio::net::TcpStream, ws_messages: Arc<AtomicUsize>) {
         let mut parts = request_line.split(' ');
         let _method = parts.next().unwrap_or("GET");
         let target = parts.next().unwrap_or("/");
-        let headers: HashMap<String, String> = lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string())).collect();
+        let headers: HashMap<String, String> =
+            lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string())).collect();
         let (path, query_text) = target.split_once('?').unwrap_or((target, ""));
-        let query: HashMap<String, String> = url::form_urlencoded::parse(query_text.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        let query: HashMap<String, String> =
+            url::form_urlencoded::parse(query_text.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
         if headers.get("upgrade").map(|u| u.eq_ignore_ascii_case("websocket")).unwrap_or(false) {
             let key = headers.get("sec-websocket-key").cloned().unwrap_or_default();
-            let accept = base64::engine::general_purpose::STANDARD.encode(sha1::Sha1::digest(format!("{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
+            let accept = base64::engine::general_purpose::STANDARD
+                .encode(sha1::Sha1::digest(format!("{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
             if sock.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.is_err() {
                 return;
             }
@@ -155,7 +170,11 @@ async fn serve(mut sock: tokio::net::TcpStream, ws_messages: Arc<AtomicUsize>) {
             buf.extend_from_slice(&chunk[..n]);
         }
         let (status, extra, body) = route(path, &query, headers.get("cookie").map(|s| s.as_str()).unwrap_or(""));
-        let mut out = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n", if status == 200 { "OK" } else { "Status" }, body.len());
+        let mut out = format!(
+            "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n",
+            if status == 200 { "OK" } else { "Status" },
+            body.len()
+        );
         for (k, v) in extra {
             out.push_str(&format!("{k}: {v}\r\n"));
         }
@@ -179,12 +198,23 @@ fn capture_write_a_web_socket_message_sent_from_a_popup_the_steps_open_never_rea
         let server = Site::start().await;
         let url = server.url.clone();
         let _home = new_home();
-        let steps: Vec<api_anything::types::TriggerStep> = serde_json::from_value(json!([{ "action": "click", "selector": "#popupws" }, { "action": "wait", "ms": 1500 }])).unwrap();
-        capture_page(CapturePageOptions { url: format!("{url}/pop"), steps: Some(steps.clone()), soft_from: None, write: true, args: None }).await.unwrap();
+        let steps: Vec<api_anything::types::TriggerStep> =
+            serde_json::from_value(json!([{ "action": "click", "selector": "#popupws" }, { "action": "wait", "ms": 1500 }])).unwrap();
+        capture_page(CapturePageOptions {
+            url: format!("{url}/pop"),
+            steps: Some(steps.clone()),
+            soft_from: None,
+            write: true,
+            args: None,
+        })
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(server.ws_messages(), 0, "the popup's message was sent while learning a write");
         // control: without --write the same page does send it (the fixture works)
-        capture_page(CapturePageOptions { url: format!("{url}/pop"), steps: Some(steps), soft_from: None, write: false, args: None }).await.unwrap();
+        capture_page(CapturePageOptions { url: format!("{url}/pop"), steps: Some(steps), soft_from: None, write: false, args: None })
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(server.ws_messages(), 1);
         close_browser().await;
@@ -210,8 +240,11 @@ fn every_saved_capture_prunes_the_directory_so_a_library_caller_no_cli_never_pil
             std::fs::write(&f, "{}").unwrap();
             std::fs::File::options().write(true).open(&f).unwrap().set_modified(stale).unwrap();
         }
-        let c = capture_page(CapturePageOptions { url: format!("{url}/pop"), steps: None, soft_from: None, write: false, args: None }).await.unwrap();
-        let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        let c = capture_page(CapturePageOptions { url: format!("{url}/pop"), steps: None, soft_from: None, write: false, args: None })
+            .await
+            .unwrap();
+        let mut names: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         names.sort();
         assert_eq!(names, [format!("{}.json", c.id)]);
         close_browser().await;
@@ -233,11 +266,19 @@ fn a_run_waits_out_a_js_challenge_that_reloads_after_a_couple_of_seconds_instead
         o.matcher = Some(Arc::new(|e| e.request.url.contains("/hotels")));
         let with_match = run_trigger(o).await.unwrap();
         let docs: Vec<_> = with_match.exchanges.iter().filter(|e| e.request.url.contains("/hotels") && e.response.is_some()).collect();
-        assert_eq!(docs.last().and_then(|d| d.status()), Some(200), "documents: {}", docs.iter().map(|d| d.status().map(|s| s.to_string()).unwrap_or_default()).collect::<Vec<_>>().join(","));
+        assert_eq!(
+            docs.last().and_then(|d| d.status()),
+            Some(200),
+            "documents: {}",
+            docs.iter().map(|d| d.status().map(|s| s.to_string()).unwrap_or_default()).collect::<Vec<_>>().join(",")
+        );
         assert!(re("Madrid hotel").is_match(docs.last().map(|d| d.body()).unwrap_or("")));
         let _home = new_home(); // a fresh profile: challenged again
         let plain = run_trigger(TriggerOptions::new(&format!("{url}/hotels?q=Porto&delay=3000"), &profile_dir())).await.unwrap();
-        assert!(plain.exchanges.iter().any(|e| e.request.url.ends_with("/api/list") && e.status() == Some(200)), "the real page's data request was captured");
+        assert!(
+            plain.exchanges.iter().any(|e| e.request.url.ends_with("/api/list") && e.status() == Some(200)),
+            "the real page's data request was captured"
+        );
         close_browser().await;
         server.close();
     })

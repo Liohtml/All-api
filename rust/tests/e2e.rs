@@ -166,7 +166,11 @@ async fn cli(args: &[&str]) -> CliOut {
         .output()
         .await
         .unwrap();
-    CliOut { code: out.status.code().unwrap_or(1), stdout: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned() }
+    CliOut {
+        code: out.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
 }
 
 fn add(op: &str, trigger: Option<Trigger>, examples: Vec<Value>) -> AddInput {
@@ -243,8 +247,13 @@ fn t01_add_get_user_from_u_name_with_two_examples_call_it_for_a_new_name_at_tier
             return skip();
         }
         let fx = &*FX;
-        let mut input = add("getUser", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
-        input.response = Some(Recipe { extract: Some("data.user".into()), pick: Some(vec!["name".into(), "followers".into(), "posts[0].text".into()]), ..Default::default() });
+        let mut input =
+            add("getUser", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
+        input.response = Some(Recipe {
+            extract: Some("data.user".into()),
+            pick: Some(vec!["name".into(), "followers".into(), "posts[0].text".into()]),
+            ..Default::default()
+        });
         let r = add_operation(input).await.unwrap();
         assert_eq!(r.operation.min_tier, 1, "{}", r.warnings.join("\n"));
         assert_eq!(j(&r.operation.matcher), json!({ "method": "GET", "host": "127.0.0.1", "path": "/api/graphql/*/UserByName" }));
@@ -274,7 +283,10 @@ fn t02_after_rotate_the_call_heals_by_rescan_no_browser_and_logs_it() {
         assert!(res.ok, "{}", js(&res));
         assert_eq!(res.healed, Some(true));
         assert_eq!(res.tier, Some(1));
-        assert_eq!(heals().iter().map(|h| (h["op"].clone(), h["strategy"].clone())).collect::<Vec<_>>(), [(json!("getUser"), json!("rescan"))]);
+        assert_eq!(
+            heals().iter().map(|h| (h["op"].clone(), h["strategy"].clone())).collect::<Vec<_>>(),
+            [(json!("getUser"), json!("rescan"))]
+        );
         assert!(spec_text().contains(&fx.state().user_query_id));
     })
 }
@@ -302,7 +314,13 @@ fn t03_heal_loop_guard_then_a_heal_by_recapture_when_rescan_cannot_work() {
             return skip();
         }
         let fx = &*FX;
-        add_operation(add("getUser2", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })])).await.unwrap();
+        add_operation(add(
+            "getUser2",
+            trigger(&format!("{}/u/{{name}}", fx.url)),
+            vec![json!({ "name": "alice" }), json!({ "name": "bob" })],
+        ))
+        .await
+        .unwrap();
         let mut spec: Value = serde_json::from_str(&spec_text()).unwrap();
         let op = spec["operations"].as_array_mut().unwrap().iter_mut().find(|o| o["name"] == "getUser2").unwrap();
         for v in op["volatile"].as_array_mut().unwrap() {
@@ -357,8 +375,10 @@ fn t04_a_write_is_learned_without_being_performed_and_runs_only_with_allow_write
         assert_eq!(j(&refused.class), json!("refused"));
         assert_eq!(writes(), 0);
 
-        let res = call(SITE, "createPost", args(json!({ "text": "hello from api-anything" })), CallOptions { allow_writes: true, ..fast() }).await;
-        assert!(res.ok, "{}\nSESSION {}\nSPEC {}", js(&res), std::fs::read_to_string(HOME.path().join("sessions").join("fixture.json")).unwrap_or_default(), spec_text());
+        let res =
+            call(SITE, "createPost", args(json!({ "text": "hello from api-anything" })), CallOptions { allow_writes: true, ..fast() })
+                .await;
+        assert!(res.ok, "{}", js(&res));
         assert_eq!(writes(), 1);
         assert!(re("hello from api-anything").is_match(&serde_json::to_string(&res.data).unwrap()));
     })
@@ -393,13 +413,10 @@ fn t06_a_login_wall_served_as_200_html_is_auth_with_a_login_hint() {
             return skip();
         }
         let fx = &*FX;
-        let lr = run_trigger(TriggerOptions::new(&format!("{}/login", fx.url), &profile_dir())).await.unwrap(); // stands in for `api-anything login`
-        eprintln!("LOGIN final={} cookies={:?} exchanges={:?}", lr.final_url, lr.cookies.iter().map(|c| (c.name.clone(), c.domain.clone(), c.path.clone(), c.expires)).collect::<Vec<_>>(), lr.exchanges.iter().map(|e| (e.request.url.clone(), e.status(), e.request.headers.get("cookie").cloned())).collect::<Vec<_>>());
+        run_trigger(TriggerOptions::new(&format!("{}/login", fx.url), &profile_dir())).await.unwrap(); // stands in for `api-anything login`
         let mut input = add("secret", trigger(&format!("{}/private", fx.url)), vec![json!({})]);
         input.matcher = path_match("/private");
-        let ar = add_operation(input).await.unwrap();
-        eprintln!("ADD warnings={:?} op={}", ar.warnings, serde_json::to_string(&ar.operation).unwrap());
-        eprintln!("SESSION {}", std::fs::read_to_string(HOME.path().join("sessions").join("fixture.json")).unwrap_or_default().replace(char::is_whitespace, ""));
+        add_operation(input).await.unwrap();
         assert_eq!(call(SITE, "secret", args(json!({})), fast()).await.data, Some(json!({ "data": { "secret": "only for you" } })));
 
         // log out everywhere: the profile and the jar
@@ -444,9 +461,18 @@ fn t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query() 
             return skip();
         }
         let fx = &*FX;
-        let r = add_operation(add("search", trigger(&format!("{}/search?q={{q}}", fx.url)), vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })])).await.unwrap();
+        let r = add_operation(add(
+            "search",
+            trigger(&format!("{}/search?q={{q}}", fx.url)),
+            vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })],
+        ))
+        .await
+        .unwrap();
         assert!(
-            r.operation.slots.iter().any(|s| s.param.as_deref() == Some("q") && s.at.first().map(|a| a.as_str()) == Some("form:f.req") && s.at.len() == 3),
+            r.operation
+                .slots
+                .iter()
+                .any(|s| s.param.as_deref() == Some("q") && s.at.first().map(|a| a.as_str()) == Some("form:f.req") && s.at.len() == 3),
             "{}",
             serde_json::to_string(&r.operation.slots).unwrap()
         );
@@ -454,7 +480,10 @@ fn t08_layered_f_req_form_encoding_with_the_xssi_prefix_works_for_a_new_query() 
         let res = call(SITE, "search", args(json!({ "q": "red \"pandas\" & co" })), fast()).await;
         assert!(res.ok, "{}", js(&res));
         assert_eq!(r.operation.response.extract.as_deref(), Some("[0][2][0]"), "the suggestion steps into the JSON-encoded payload");
-        assert_eq!(res.data.as_ref().unwrap()[0], json!(["red \"pandas\" & co result 1", "https://example.test/red%20%22pandas%22%20%26%20co/1"]));
+        assert_eq!(
+            res.data.as_ref().unwrap()[0],
+            json!(["red \"pandas\" & co result 1", "https://example.test/red%20%22pandas%22%20%26%20co/1"])
+        );
     })
 }
 
@@ -505,7 +534,12 @@ impl McpClient {
         let stdin = child.stdin.take().unwrap();
         let lines = BufReader::new(child.stdout.take().unwrap()).lines();
         let mut c = McpClient { child, stdin, lines, next_id: 0, instructions: String::new() };
-        let init = c.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "e2e", "version": "0" } })).await;
+        let init = c
+            .request(
+                "initialize",
+                json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "e2e", "version": "0" } }),
+            )
+            .await;
         c.instructions = init["instructions"].as_str().unwrap_or("").to_string();
         c.stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.unwrap();
         c
@@ -552,7 +586,10 @@ fn t10_the_mcp_server_lists_3_meta_tools_calls_reads_and_hides_and_refuses_write
         let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         names.sort();
         assert_eq!(names, ["call_operation", "list_operations", "list_sites", "login"]);
-        assert_eq!(tools.iter().find(|t| t["name"] == "call_operation").map(|t| t["annotations"]["readOnlyHint"].clone()), Some(json!(true)));
+        assert_eq!(
+            tools.iter().find(|t| t["name"] == "call_operation").map(|t| t["annotations"]["readOnlyHint"].clone()),
+            Some(json!(true))
+        );
         // the agent is told which sites it can call before it picks web search
         assert!(re(&format!(r"\b{SITE}\b")).is_match(&client.instructions), "{}", client.instructions);
 
@@ -579,7 +616,8 @@ fn t11_a_missing_session_value_clean_home_is_auth_one_trigger_run_refreshes_it_t
             return skip();
         }
         let fx = &*FX;
-        let mut input = add("getUser3", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
+        let mut input =
+            add("getUser3", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
         input.response = Some(Recipe { extract: Some("data.user.name".into()), ..Default::default() });
         add_operation(input).await.unwrap();
         let mut s = load_session(SITE).unwrap();
@@ -603,7 +641,8 @@ fn t12_public_keeps_a_public_bearer_literal_works_with_no_session_values_and_exp
             return skip();
         }
         let fx = &*FX;
-        let mut input = add("getUserPublic", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
+        let mut input =
+            add("getUserPublic", trigger(&format!("{}/u/{{name}}", fx.url)), vec![json!({ "name": "alice" }), json!({ "name": "bob" })]);
         input.public = Some(vec!["authorization".into()]);
         input.response = Some(Recipe { extract: Some("data.user.name".into()), ..Default::default() });
         add_operation(input).await.unwrap();
@@ -634,12 +673,19 @@ fn t13_a_write_sent_as_a_get_by_a_button_is_learned_without_being_sent_from_a_no
         let fx = &*FX;
         let follows = || fx.calls().iter().filter(|c| c.path.starts_with("/api/follow")).count();
         let mut input = add("follow", None, vec![json!({ "user": "alice" }), json!({ "user": "carol" })]);
-        input.trigger = Some(Trigger { url: format!("{}/follow/{{user}}", fx.url), steps: steps(json!([{ "action": "click", "selector": "#follow" }])), soft_from: None });
+        input.trigger = Some(Trigger {
+            url: format!("{}/follow/{{user}}", fx.url),
+            steps: steps(json!([{ "action": "click", "selector": "#follow" }])),
+            soft_from: None,
+        });
         input.write = true;
         let r = add_operation(input).await.unwrap();
         assert_eq!(r.operation.request.method, "GET");
         assert_eq!(follows(), 0, "learning sent no write");
-        let cap = capture_page(CapturePageOptions { url: format!("{}/list", fx.url), steps: None, soft_from: None, write: false, args: None }).await.unwrap();
+        let cap =
+            capture_page(CapturePageOptions { url: format!("{}/list", fx.url), steps: None, soft_from: None, write: false, args: None })
+                .await
+                .unwrap();
         let mut input = add("w2", None, vec![json!({})]);
         input.write = true;
         input.from = Some(FromCapture { capture: cap, id: None });
@@ -656,7 +702,8 @@ fn t14_ids_that_differ_per_page_load_but_replay_fine_are_session_scoped_min_tier
             return skip();
         }
         let fx = &*FX;
-        let mut input = add("scoped", trigger(&format!("{}/scoped?q={{q}}", fx.url)), vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })]);
+        let mut input =
+            add("scoped", trigger(&format!("{}/scoped?q={{q}}", fx.url)), vec![json!({ "q": "kittens" }), json!({ "q": "puppies" })]);
         input.response = Some(Recipe { extract: Some("data.results".into()), ..Default::default() });
         let r = add_operation(input).await.unwrap();
         assert_eq!(r.operation.min_tier, 1, "{}", r.warnings.join("\n"));
@@ -692,7 +739,10 @@ fn t15_add_from_a_saved_run_re_learns_without_a_browser_templating_step_selector
         input.from = Some(FromCapture { capture: cap, id: None });
         let r = add_operation(input).await.unwrap();
         assert_eq!(r.operation.trigger.url, format!("{}/follow/{{user}}", fx.url));
-        assert_eq!(r.operation.trigger.steps.as_ref().and_then(|s| s.get(1)).and_then(|s| s.selector.as_deref()), Some("a[href=\"/u/{user}\"], #follow"));
+        assert_eq!(
+            r.operation.trigger.steps.as_ref().and_then(|s| s.get(1)).and_then(|s| s.selector.as_deref()),
+            Some("a[href=\"/u/{user}\"], #follow")
+        );
         assert_eq!(r.captures, Vec::<String>::new());
     })
 }
@@ -751,7 +801,8 @@ fn t18_login_imports_the_session_from_the_browser_a_revoke_fresh_cookie_self_hea
         unsafe {
             std::env::set_var(
                 "API_ANYTHING_BROWSER_ROOTS",
-                json!([{ "name": "Chrome", "family": "chromium", "root": browser_root.path().to_str().unwrap(), "password": "pw" }]).to_string(),
+                json!([{ "name": "Chrome", "family": "chromium", "root": browser_root.path().to_str().unwrap(), "password": "pw" }])
+                    .to_string(),
             )
         };
         let run = async {
@@ -763,7 +814,8 @@ fn t18_login_imports_the_session_from_the_browser_a_revoke_fresh_cookie_self_hea
             add_operation(input).await.unwrap();
 
             // login by import: browserless, no Keychain (password injected), no profile push
-            let imported = import_session(SITE, &format!("{}/", fx.url), ImportOptions { push_profile: false, ..Default::default() }).await.unwrap();
+            let imported =
+                import_session(SITE, &format!("{}/", fx.url), ImportOptions { push_profile: false, ..Default::default() }).await.unwrap();
             assert_eq!(imported.as_ref().map(|i| i.source.as_str()), Some("chrome:Default"));
             assert_eq!(load_session(SITE).unwrap().source.as_deref(), Some("chrome:Default"));
 

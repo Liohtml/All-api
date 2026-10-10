@@ -151,14 +151,20 @@ fn login_wall_rate_limit_html_list() {
         let wall = c.get(format!("{}/private", fx.url)).send().await.unwrap();
         assert_eq!(wall.status(), 200);
         assert!(re("html").is_match(wall.headers().get("content-type").map(|v| v.to_str().unwrap()).unwrap_or("")));
-        let ok: Value = serde_json::from_str(&c.get(format!("{}/private", fx.url)).header("cookie", "session=abc").send().await.unwrap().text().await.unwrap()).unwrap();
+        let ok: Value = serde_json::from_str(
+            &c.get(format!("{}/private", fx.url)).header("cookie", "session=abc").send().await.unwrap().text().await.unwrap(),
+        )
+        .unwrap();
         assert_eq!(ok, json!({ "data": { "secret": "only for you" } }));
         let mut codes = vec![];
         for _ in 0..3 {
             codes.push(c.get(format!("{}/api/limited", fx.url)).send().await.unwrap().status().as_u16());
         }
         assert_eq!(codes, [200, 200, 429]);
-        assert!(re(r#"<li class="user"><a class="name" href="/u/alice">alice</a>"#).is_match(&c.get(format!("{}/list", fx.url)).send().await.unwrap().text().await.unwrap()));
+        assert!(
+            re(r#"<li class="user"><a class="name" href="/u/alice">alice</a>"#)
+                .is_match(&c.get(format!("{}/list", fx.url)).send().await.unwrap().text().await.unwrap())
+        );
         fx.close();
     })
 }
@@ -182,7 +188,11 @@ fn t1_run_trigger_captures_the_graph_ql_read_with_wire_headers_and_bodies() {
         assert_eq!(gql.request.headers.get("x-app-version").map(|s| s.as_str()), Some("2026.09.27-a1b2c3"));
         assert_eq!(gql.request.headers.get("sec-fetch-site").map(|s| s.as_str()), Some("same-origin"));
         assert!(!re("HeadlessChrome").is_match(gql.request.headers.get("user-agent").map(|s| s.as_str()).unwrap_or("")));
-        assert!(!re("Headless").is_match(gql.request.headers.get("sec-ch-ua").map(|s| s.as_str()).unwrap_or("")), "{:?}", gql.request.headers.get("sec-ch-ua"));
+        assert!(
+            !re("Headless").is_match(gql.request.headers.get("sec-ch-ua").map(|s| s.as_str()).unwrap_or("")),
+            "{:?}",
+            gql.request.headers.get("sec-ch-ua")
+        );
         assert_eq!(gql.status(), Some(200));
         let body: Value = serde_json::from_str(gql.body()).unwrap();
         assert_eq!(body["data"]["user"]["name"], json!("alice"));
@@ -229,7 +239,10 @@ fn t3_soft_from_on_a_client_routed_spa_stays_in_the_app_through_its_own_link_or_
             o.soft_from = Some(format!("{}/spa/alice", fx.url));
             let r = run_trigger(o).await.unwrap();
             assert_eq!(r.exchanges.iter().filter(|e| e.resource_type == "document").count(), 1, "{name}: no second page load");
-            assert!(r.exchanges.iter().any(|e| e.request.url.ends_with(&format!("/api/spa/user?name={name}"))), "{name}: the route's XHR fired");
+            assert!(
+                r.exchanges.iter().any(|e| e.request.url.ends_with(&format!("/api/spa/user?name={name}"))),
+                "{name}: the route's XHR fired"
+            );
             assert_eq!(r.final_url, format!("{}/spa/{name}", fx.url));
         }
     })
@@ -245,7 +258,8 @@ fn t4_write_interception_covers_service_workers_and_gets_sent_by_a_ui_action() {
         }
         let fx = &*FX;
         let hits = || fx.calls().iter().filter(|c| c.path == "/api/sw-write" || c.path.starts_with("/api/follow")).count();
-        let guard: api_anything::browser::Intercept = Arc::new(|e, acting, _via| e.request.method != "GET" || (acting && ["xhr", "fetch"].contains(&e.resource_type.as_str())));
+        let guard: api_anything::browser::Intercept =
+            Arc::new(|e, acting, _via| e.request.method != "GET" || (acting && ["xhr", "fetch"].contains(&e.resource_type.as_str())));
         // A worker installed on an earlier visit would proxy fetches past page routing; api-anything blocks workers.
         let mut o = TriggerOptions::new(&format!("{}/sw", fx.url), &profile());
         o.intercept = Some(guard.clone());
@@ -303,7 +317,9 @@ fn t6_layered_form_encoding_and_per_request_signatures_come_through() {
         let s = run_trigger(TriggerOptions::new(&format!("{}/search?q=pizza", fx.url), &profile())).await.unwrap();
         let rpc = s.exchanges.iter().find(|e| e.request.url.contains("/api/rpc"));
         assert_eq!(rpc.map(|r| r.resource_type.as_str()), Some("xhr"));
-        assert!(re("pizza").is_match(&api_anything::util::decode_uri_component(rpc.and_then(|r| r.request.body.as_deref()).unwrap_or("")).unwrap_or_default()));
+        assert!(re("pizza").is_match(
+            &api_anything::util::decode_uri_component(rpc.and_then(|r| r.request.body.as_deref()).unwrap_or("")).unwrap_or_default()
+        ));
         assert!(rpc.map(|r| r.body().starts_with(")]}'")).unwrap_or(false));
 
         fx.set_require_signature(true);
@@ -364,7 +380,9 @@ fn t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies() {
         assert!(re("json").is_match(r.headers.get("content-type").map(|s| s.as_str()).unwrap_or("")));
         let _ms: u64 = r.ms;
         let call = fx.calls().last().cloned();
-        assert!(!re("HeadlessChrome").is_match(&call.and_then(|c| c.headers.get("user-agent").cloned()).unwrap_or_else(|| "undefined".into())));
+        assert!(
+            !re("HeadlessChrome").is_match(&call.and_then(|c| c.headers.get("user-agent").cloned()).unwrap_or_else(|| "undefined".into()))
+        );
     })
 }
 

@@ -52,6 +52,9 @@ struct BrowserInner {
     /// told the id of every destroyed target
     destroyed: Vec<mpsc::UnboundedSender<String>>,
     origin_pages: HashMap<String, Arc<Page>>,
+    /// a blank tab kept for the browser's life: Chrome ends its session (and drops session cookies)
+    /// once the last tab closes, and Playwright's persistent context keeps its first page open
+    keep_alive: Option<String>,
 }
 
 pub struct Browser {
@@ -117,7 +120,7 @@ impl Browser {
                     } else {
                         None
                     };
-                    if waiter.is_none() && run_tx.is_none() {
+                    if waiter.is_none() && run_tx.is_none() && inner.keep_alive.as_deref() != Some(t.as_str()) {
                         inner.unclaimed.push(t.clone());
                     }
                     (waiter, run_tx)
@@ -314,10 +317,13 @@ pub struct Page {
     pub session_id: String,
     main_frame: Mutex<String>,
     closed: AtomicBool,
-    /// every request the page sent since it was opened, by request id: (method, url, body), so a
-    /// fetch can tell the redirect of a request the page itself sent earlier from its own
-    requests: Mutex<HashMap<String, (String, String, Option<String>)>>,
+    /// every request the page sent since it was opened, by request id, hop by hop, so a fetch can
+    /// tell the redirect of a request the page itself sent earlier from its own
+    requests: Mutex<HashMap<String, Vec<SentRequest>>>,
 }
+
+/// A request as the page sent it: (method, url, body).
+type SentRequest = (String, String, Option<String>);
 
 /// A page on an attached target, recording its requests from the start.
 fn new_page_on(browser: &Arc<Browser>, at: &Attached) -> Arc<Page> {
@@ -330,7 +336,7 @@ fn new_page_on(browser: &Arc<Browser>, at: &Attached) -> Arc<Page> {
             if ev.method == "Network.requestWillBeSent" {
                 let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
                 let req = ev.params.get("request").cloned().unwrap_or(Value::Null);
-                page.requests.lock().unwrap().insert(rid, (req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string())));
+                page.requests.lock().unwrap().entry(rid).or_default().push((req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string())));
             }
         }
     });
@@ -634,6 +640,14 @@ pub async fn open_browser(profile_dir: &Path, headless: bool) -> Result<Arc<Brow
         json!({ "autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true, "filter": [{ "type": "page", "exclude": false }, { "exclude": true }] }),
     )
     .await?;
+    if headless {
+        let kept = cdp.send(None, "Target.createTarget", json!({ "url": "about:blank" })).await?;
+        if let Some(id) = kept.get("targetId").and_then(|t| t.as_str()) {
+            let mut inner = browser.inner.lock().unwrap();
+            inner.keep_alive = Some(id.to_string());
+            inner.unclaimed.retain(|t| t != id);
+        }
+    }
     GLOBAL.lock().unwrap().current = Some(browser.clone());
     Ok(browser)
 }
@@ -683,7 +697,11 @@ pub async fn add_cookies_to_profile(cookies: &[StoredCookie], profile_dir: &Path
             v
         })
         .collect();
-    b.cdp.send(None, "Storage.setCookies", json!({ "cookies": list })).await?;
+    // through a page: at the browser level, with no browser context named, Chrome stores nothing
+    let page = b.new_page(None).await?;
+    let r = page.send("Storage.setCookies", json!({ "cookies": list })).await;
+    let _ = page.close().await;
+    r?;
     Ok(())
 }
 
@@ -754,6 +772,8 @@ const MATCH_GRACE_MS: f64 = 3000.0;
 const CHALLENGE_WAIT_MS: u64 = 15_000;
 // How long a page gets to be emptied, and then to close, before the run ends without waiting for it.
 const SEAL_MS: u64 = 5000;
+// The path of the beacon a page being emptied sends last from pagehide: the old document is through.
+const SEAL_MARK: &str = "/__api_anything_sealed__";
 
 fn lower_headers(v: Option<&Value>) -> Headers {
     let mut out = Headers::new();
@@ -800,6 +820,8 @@ struct Cap {
     locations: Vec<String>,
     acting: bool,
     sealed: bool,
+    /// pages whose last document has unloaded under the seal (their SEAL_MARK beacon came)
+    sealed_marks: HashSet<String>,
     /// requests the guard has been asked about and not answered yet
     deciding: usize,
 }
@@ -933,7 +955,12 @@ impl Run {
                     cap.exchanges[first].response = None;
                 }
             }
-            match network_id.as_ref().and_then(|n| cap.by_req.get(n).copied()) {
+            // A pause that names no network id (a deferred fetchLater) may still be a request the
+            // network reported: the latest unanswered one of its method and URL.
+            let reported = network_id.as_ref().map(|n| cap.by_req.get(n).copied()).unwrap_or_else(|| {
+                cap.exchanges.iter().rposition(|e| !e.aborted && e.response.is_none() && e.request.method == ex.request.method && e.request.url == ex.request.url)
+            });
+            match reported {
                 Some(idx) => cap.exchanges[idx].aborted = true,
                 None => {
                     let id = cap.exchanges.len() as u64 + 1;
@@ -1222,6 +1249,15 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                 }
                 "Fetch.requestPaused" => {
                     let req = p.get("request").cloned().unwrap_or(Value::Null);
+                    if req.get("url").and_then(|u| u.as_str()).map(|u| u.contains(SEAL_MARK)).unwrap_or(false) {
+                        run.cap.lock().unwrap().sealed_marks.insert(page.target_id.clone());
+                        let page2 = page.clone();
+                        let fetch_id = rid.clone();
+                        tokio::spawn(async move {
+                            let _ = page2.send("Fetch.failRequest", json!({ "requestId": fetch_id, "errorReason": "Aborted" })).await;
+                        });
+                        continue;
+                    }
                     let ex = Exchange {
                         id: 0,
                         resource_type: resource_type(p.get("resourceType")),
@@ -1334,9 +1370,13 @@ pub async fn run_trigger(o: TriggerOptions) -> Result<CaptureResult> {
             }
         }
     });
-    let result = run_inner(&run, &page, &o, timeout).await;
+    let mut result = run_inner(&run, &page, &o, timeout).await;
     // The pages are closed before the guards are lifted: an open page still sends.
     let _gone = close_pages(&run).await;
+    // what a page sent as it was emptied (a pagehide beacon, stopped and recorded) belongs to the capture too
+    if let Ok(r) = &mut result {
+        r.exchanges = run.cap.lock().unwrap().exchanges.clone();
+    }
     popup_task.abort();
     browser.unregister_run(run_id);
     result
@@ -1420,8 +1460,16 @@ async fn close_pages(run: &Arc<Run>) -> bool {
                 emptied.insert(p.target_id.clone());
                 // A round trip through the new document, then through the browser: whatever the old
                 // one sent as it unloaded has been paused and failed before either returns.
+                // The new document commits before the old one has unloaded (its pagehide handlers run
+                // after, and may be slow): a beacon of our own, sent last from pagehide, says when the old
+                // document is through. It never leaves the browser.
+                let marked = within(p.evaluate(&format!("addEventListener('pagehide', () => {{ try {{ navigator.sendBeacon(new URL({}, location.href).href, '') }} catch (e) {{}} }}), 1", json!(SEAL_MARK))), SEAL_MS).await.is_some();
                 if within(p.navigate("about:blank", None, Duration::from_millis(SEAL_MS)), SEAL_MS).await.is_some() {
                     let _ = within(p.evaluate("0"), SEAL_MS).await;
+                }
+                let wait = tokio::time::Instant::now() + Duration::from_millis(SEAL_MS);
+                while marked && !run.cap.lock().unwrap().sealed_marks.contains(&p.target_id) && tokio::time::Instant::now() < wait {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 let wait = tokio::time::Instant::now() + Duration::from_millis(SEAL_MS);
                 while run.cap.lock().unwrap().deciding > 0 && tokio::time::Instant::now() < wait {
@@ -1571,16 +1619,19 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
     let seen2 = seen.clone();
     let page2 = page.clone();
     let watcher = tokio::spawn(async move {
-        let mut requests: HashMap<String, (String, String, Option<String>)> = HashMap::new();
-        // a request the page sent before this fetch (its own copy of the same one) is in the page's record
-        let known = |requests: &HashMap<String, (String, String, Option<String>)>, rid: &str| requests.get(rid).cloned().or_else(|| page2.requests.lock().unwrap().get(rid).cloned());
+        let mut requests: HashMap<String, SentRequest> = HashMap::new();
+        // A request the page sent before this fetch (its own copy of the same one) is in the page's
+        // record; the page records the hop after a redirect too, so the answered hop is found by its URL.
+        let known = |requests: &HashMap<String, SentRequest>, rid: &str, url: &str| {
+            requests.get(rid).cloned().or_else(|| page2.requests.lock().unwrap().get(rid).and_then(|hops| hops.iter().rev().find(|(_, u, _)| u == url).or(hops.first()).cloned()))
+        };
         while let Some(ev) = rx.recv().await {
             let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
             match ev.method.as_str() {
                 "Network.requestWillBeSent" => {
                     let req = ev.params.get("request").cloned().unwrap_or(Value::Null);
                     if let Some(redirect) = ev.params.get("redirectResponse") {
-                        if let Some((m, u, b)) = known(&requests, &rid) {
+                        if let Some((m, u, b)) = known(&requests, &rid, redirect.get("url").and_then(|u| u.as_str()).unwrap_or("")) {
                             let status = redirect.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
                             if (300..400).contains(&status) {
                                 seen2.lock().unwrap().push((m, u, b, status, lower_headers(redirect.get("headers"))));
@@ -1593,7 +1644,7 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
                     let res = ev.params.get("response").cloned().unwrap_or(Value::Null);
                     let status = res.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
                     if (300..400).contains(&status) {
-                        if let Some((m, u, b)) = known(&requests, &rid) {
+                        if let Some((m, u, b)) = known(&requests, &rid, res.get("url").and_then(|u| u.as_str()).unwrap_or("")) {
                             seen2.lock().unwrap().push((m, u, b, status, lower_headers(res.get("headers"))));
                         }
                     }

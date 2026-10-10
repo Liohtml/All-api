@@ -67,7 +67,7 @@ impl Hit {
     fn h(&self, name: &str) -> Option<&str> {
         self.headers.get(name).map(String::as_str)
     }
-    fn from_chrome(&self) -> bool {
+    fn chrome_ua(&self) -> bool {
         self.h("user-agent").unwrap_or("").contains("Chrome/")
     }
 }
@@ -115,7 +115,13 @@ fn linger_zero(fd: std::os::unix::io::RawFd) {
     let l = libc::linger { l_onoff: 1, l_linger: 0 };
     // SAFETY: a plain setsockopt on a socket this task still owns
     unsafe {
-        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_LINGER, &l as *const libc::linger as *const libc::c_void, std::mem::size_of::<libc::linger>() as libc::socklen_t);
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            &l as *const libc::linger as *const libc::c_void,
+            std::mem::size_of::<libc::linger>() as libc::socklen_t,
+        );
     }
 }
 
@@ -147,7 +153,8 @@ async fn serve(host: &str, shown: &str, handler: Handler) -> (String, tokio::tas
                             headers.entry(k.as_str().to_string()).and_modify(|e| *e = format!("{e}, {v}")).or_insert(v);
                         }
                         let url = parts.uri.path_and_query().map(|p| p.to_string()).unwrap_or_else(|| "/".to_string());
-                        let hit = Hit { method: parts.method.to_string(), url, headers, body: String::from_utf8_lossy(&bytes).into_owned() };
+                        let hit =
+                            Hit { method: parts.method.to_string(), url, headers, body: String::from_utf8_lossy(&bytes).into_owned() };
                         match handler(hit).await {
                             Resp::Http(r) => Ok::<_, Infallible>(r),
                             Resp::Never => std::future::pending().await,
@@ -231,7 +238,8 @@ fn compress(e: &str, raw: &[u8]) -> Vec<u8> {
     }
 }
 
-const LOGIN_PAGE: &str = "<!doctype html><title>Log in</title><form action=\"/login\"><input name=\"user\"><input type=\"password\" name=\"pw\"></form>";
+const LOGIN_PAGE: &str =
+    "<!doctype html><title>Log in</title><form action=\"/login\"><input name=\"user\"><input type=\"password\" name=\"pw\"></form>";
 
 fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Resp {
     let (path, q) = query_of(&hit.url);
@@ -260,7 +268,11 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
             let had = s.rotate == 0 || cookie.contains(&want);
             s.rotate += 1;
             let set = format!("tok={}; Path=/", s.rotate);
-            if had { json_r(json!({"items": [{"n": s.rotate}]}), 200, &[("set-cookie", &set)]) } else { json_r(json!({"error": "stale token"}), 401, &[("set-cookie", &set)]) }
+            if had {
+                json_r(json!({"items": [{"n": s.rotate}]}), 200, &[("set-cookie", &set)])
+            } else {
+                json_r(json!({"error": "stale token"}), 401, &[("set-cookie", &set)])
+            }
         }
         "/away" => head(status_q("s").unwrap_or(302), &[("location", &format!("{other_base}/landing"))]),
         // A read the page asks for twice: first signed, which the server sends on to a check that
@@ -287,23 +299,41 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
         "/hop" => head(status_q("s").unwrap_or(0), &[("location", &qs("to").unwrap_or_else(|| "/landed".to_string()))]),
         // a redirect to the other origin whose Location copies the token a JSON header carried
         "/away-copy" => {
-            let token = serde_json::from_str::<Value>(hit.h("x-session").unwrap_or("{}")).ok().and_then(|v| v.get("token").map(api_anything::util::as_text)).unwrap_or_else(|| "undefined".to_string());
+            let token = serde_json::from_str::<Value>(hit.h("x-session").unwrap_or("{}"))
+                .ok()
+                .and_then(|v| v.get("token").map(api_anything::util::as_text))
+                .unwrap_or_else(|| "undefined".to_string());
             head(302, &[("location", &format!("{other_base}/landing?token={token}"))])
         }
         // a POST redirected to an endpoint that turns away a bodiless request still carrying body headers
         "/hop-strict" => head(status_q("s").unwrap_or(0), &[("location", "/strict")]),
         "/strict" => {
-            let kept: Vec<&str> = ["content-type", "content-language", "content-encoding", "content-location"].into_iter().filter(|h| hit.headers.contains_key(*h)).collect();
-            if kept.is_empty() { json_r(json!({"items": [{"ok": 1}]}), 200, &[]) } else { json_r(json!({"error": format!("body headers: {}", kept.join(","))}), 415, &[]) }
+            let kept: Vec<&str> = ["content-type", "content-language", "content-encoding", "content-location"]
+                .into_iter()
+                .filter(|h| hit.headers.contains_key(*h))
+                .collect();
+            if kept.is_empty() {
+                json_r(json!({"items": [{"ok": 1}]}), 200, &[])
+            } else {
+                json_r(json!({"error": format!("body headers: {}", kept.join(","))}), 415, &[])
+            }
         }
         // answers with the body headers the request arrived with
-        "/told" => json_r(json!({"items": [{"language": hit.h("content-language").unwrap_or("en"), "type": hit.h("content-type").unwrap_or("")}]}), 200, &[]),
+        "/told" => json_r(
+            json!({"items": [{"language": hit.h("content-language").unwrap_or("en"), "type": hit.h("content-type").unwrap_or("")}]}),
+            200,
+            &[],
+        ),
         // a write that is passed on, with its method and body, for as long as it is followed
         "/again" => head(status_q("s").unwrap_or(0), &[("location", &hit.url)]),
         // six redirects, then the data
         "/chain" => {
             let n: u32 = qs("n").and_then(|s| s.parse().ok()).unwrap_or(0);
-            if n < 6 { head(302, &[("location", &format!("/chain?n={}", n + 1))]) } else { json_r(json!({"items": [{"end": n}]}), 200, &[]) }
+            if n < 6 {
+                head(302, &[("location", &format!("/chain?n={}", n + 1))])
+            } else {
+                json_r(json!({"items": [{"end": n}]}), 200, &[])
+            }
         }
         "/loop" => head(302, &[("location", "/loop")]),
         "/to-login" => head(302, &[("location", "/accounts/login/?next=/api")]),
@@ -314,7 +344,9 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
             res(200, &[("content-type", "application/json"), ("content-encoding", &e)], compress(&e, raw.as_bytes()))
         }
         // "café" in ISO-8859-1
-        "/latin1" => res(200, &[("content-type", "application/json; charset=iso-8859-1")], b"{\"items\":[{\"name\":\"caf\xe9\"}]}".to_vec()),
+        "/latin1" => {
+            res(200, &[("content-type", "application/json; charset=iso-8859-1")], b"{\"items\":[{\"name\":\"caf\xe9\"}]}".to_vec())
+        }
         // "日本" in Shift_JIS
         "/sjis" => {
             let mut b = b"<html><body><ul><li class=i>".to_vec();
@@ -338,20 +370,34 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
         "/empty" => head(204, &[]),
         // "no results" answered as 204; the example query has results
         "/maybe" => {
-            if qs("q").as_deref() == Some("alice") { json_r(json!({"items": [{"q": "alice"}]}), 200, &[]) } else { head(204, &[]) }
+            if qs("q").as_deref() == Some("alice") {
+                json_r(json!({"items": [{"q": "alice"}]}), 200, &[])
+            } else {
+                head(204, &[])
+            }
         }
         "/r429" => json_r(json!({"error": "Too Many Requests"}), 429, &[("retry-after", &qs("ra").unwrap_or_else(|| "120".to_string()))]),
         "/gql" => json_r(serde_json::from_str(&qs("body").unwrap_or_default()).unwrap_or(Value::Null), 200, &[]),
         // Post/Redirect/Get: the POST ran, then the landing page is forbidden to scripts
         "/api/follow" => {
-            if hit.method == "POST" { head(303, &[("location", "/done")]) } else { json_r(json!({"error": "method"}), 405, &[]) }
+            if hit.method == "POST" {
+                head(303, &[("location", "/done")])
+            } else {
+                json_r(json!({"error": "method"}), 405, &[])
+            }
         }
         "/done" => res(403, &[("content-type", "text/plain")], b"Forbidden".to_vec()),
         // the write succeeded; the page it lands on has a change-password form
-        "/api/settings" => html_r(200, "<!doctype html><h1>Settings saved</h1><form action=\"/pw\"><input type=\"password\" name=\"new\"></form>"),
+        "/api/settings" => {
+            html_r(200, "<!doctype html><h1>Settings saved</h1><form action=\"/pw\"><input type=\"password\" name=\"new\"></form>")
+        }
         "/api/user" => {
             let name = qs("name");
-            if name.as_deref() == Some("alice") { json_r(json!({"user": {"name": name}}), 200, &[]) } else { json_r(json!({"error": "Not Found"}), 404, &[]) }
+            if name.as_deref() == Some("alice") {
+                json_r(json!({"user": {"name": name}}), 200, &[])
+            } else {
+                json_r(json!({"error": "Not Found"}), 404, &[])
+            }
         }
         "/api/items" => json_r(json!({"items": [{"page": qs("page")}]}), 200, &[]),
         // signed-in data: answers the one session the server honours, else its login page as 200 HTML
@@ -361,19 +407,29 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
         }
         // a write that runs, then bounces the POST to a login check that refuses it
         "/api/save" => {
-            if q.contains_key("login") { res(403, &[("content-type", "text/html")], LOGIN_PAGE.as_bytes().to_vec()) } else { head(307, &[("location", "/api/save?login=1")]) }
+            if q.contains_key("login") {
+                res(403, &[("content-type", "text/html")], LOGIN_PAGE.as_bytes().to_vec())
+            } else {
+                head(307, &[("location", "/api/save?login=1")])
+            }
         }
         // a button whose handler fires twice (a double-bound listener), next to a request that belongs with the write
         "/double-page" => html_r(
             200,
             "<!doctype html><title>double</title><button id=\"go\">go</button><script>document.getElementById(\"go\").onclick=()=>{fetch(\"/api/companion\",{method:\"POST\",body:\"c=1\"});for(let i=0;i<2;i++)fetch(\"/api/double\",{method:\"POST\",body:\"x=1\"})}</script>",
         ),
-        "/save-page" => html_r(200, "<!doctype html><title>save</title><script>fetch(\"/api/save\",{method:\"POST\",body:\"x=1\"})</script>"),
+        "/save-page" => {
+            html_r(200, "<!doctype html><title>save</title><script>fetch(\"/api/save\",{method:\"POST\",body:\"x=1\"})</script>")
+        }
         // a page whose script asks for the signed-in data
         "/me-page" => html_r(200, "<!doctype html><title>me</title><script>fetch(\"/api/me\")</script>"),
         // a wall that answers a non-browser client the way a framework answers a stale CSRF token (or with ?status=)
         "/api/picky" => {
-            if hit.from_chrome() { json_r(json!({"items": [{"picky": "ok"}]}), 200, &[]) } else { json_r(json!({"message": "CSRF token mismatch."}), status_q("status").filter(|s| *s != 0).unwrap_or(419), &[]) }
+            if hit.chrome_ua() {
+                json_r(json!({"items": [{"picky": "ok"}]}), 200, &[])
+            } else {
+                json_r(json!({"message": "CSRF token mismatch."}), status_q("status").filter(|s| *s != 0).unwrap_or(419), &[])
+            }
         }
         // double-submit CSRF: the header must repeat the ct cookie
         "/api/csrf" => {
@@ -385,11 +441,21 @@ fn fixture_route(hit: Hit, state: Arc<Mutex<FxState>>, other_base: String) -> Re
         }
         // an API behind a header only the page's own script knows (a guest token)
         "/api/token" => {
-            if hit.h("x-token") == Some("guest-token-1") { json_r(json!({"items": [{"token": "ok"}]}), 200, &[]) } else { json_r(json!({"error": "Bad guest token"}), 401, &[]) }
+            if hit.h("x-token") == Some("guest-token-1") {
+                json_r(json!({"items": [{"token": "ok"}]}), 200, &[])
+            } else {
+                json_r(json!({"error": "Bad guest token"}), 401, &[])
+            }
         }
-        "/tokened" => html_r(200, "<!doctype html><title>tokened</title><script>fetch(\"/api/token\",{headers:{\"x-token\":\"guest-token-1\"}})</script>"),
+        "/tokened" => html_r(
+            200,
+            "<!doctype html><title>tokened</title><script>fetch(\"/api/token\",{headers:{\"x-token\":\"guest-token-1\"}})</script>",
+        ),
         // a page whose script asks the API for its own ?page=
-        "/paged" => html_r(200, "<!doctype html><title>paged</title><script>fetch(\"/api/items?page=\"+encodeURIComponent(new URLSearchParams(location.search).get(\"page\")))</script>"),
+        "/paged" => html_r(
+            200,
+            "<!doctype html><title>paged</title><script>fetch(\"/api/items?page=\"+encodeURIComponent(new URLSearchParams(location.search).get(\"page\")))</script>",
+        ),
         "/" => html_r(200, "<!doctype html><title>home</title>"),
         _ => json_r(json!({"items": [{"path": path}]}), 200, &[]),
     }
@@ -580,9 +646,11 @@ fn with_source(mut s: Session, source: &str) -> Session {
 }
 
 /// The TS `fetchImpl` injection: answers from `f` and keeps `${method} ${url} ${body}` of every request.
+type Answer = Box<dyn Fn(&HttpRequest) -> anyhow::Result<HttpResponse> + Send + Sync>;
+
 struct FnFetcher {
     hits: Mutex<Vec<String>>,
-    f: Box<dyn Fn(&HttpRequest) -> anyhow::Result<HttpResponse> + Send + Sync>,
+    f: Answer,
 }
 
 impl Fetcher for FnFetcher {
@@ -598,7 +666,13 @@ fn fetcher(f: impl Fn(&HttpRequest) -> anyhow::Result<HttpResponse> + Send + Syn
 }
 
 fn mem_response(status: u16, headers: &[(&str, &str)], body: &str) -> HttpResponse {
-    HttpResponse { status, headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Headers>(), set_cookie: vec![], body: body.as_bytes().to_vec(), url: String::new() }
+    HttpResponse {
+        status,
+        headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Headers>(),
+        set_cookie: vec![],
+        body: body.as_bytes().to_vec(),
+        url: String::new(),
+    }
 }
 
 fn mem_json(v: Value, status: u16) -> HttpResponse {
@@ -624,10 +698,15 @@ fn make_chromium_db(profile_dir: &Path, rows: &[(&str, &str, &str)], password: &
         let mut plain = sha2::Sha256::digest(host_key.as_bytes()).to_vec();
         plain.extend_from_slice(value.as_bytes());
         let iv = [0x20u8; 16];
-        let enc = cbc::Encryptor::<aes::Aes128>::new((&key).into(), (&iv).into()).encrypt_padded_vec_mut::<aes::cipher::block_padding::Pkcs7>(&plain);
+        let enc = cbc::Encryptor::<aes::Aes128>::new((&key).into(), (&iv).into())
+            .encrypt_padded_vec_mut::<aes::cipher::block_padding::Pkcs7>(&plain);
         let mut blob = b"v10".to_vec();
         blob.extend(enc);
-        db.execute("INSERT INTO cookies VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", rusqlite::params![host_key, name, "", blob, "/", 0i64, 0i64, 0i64, -1i64]).unwrap();
+        db.execute(
+            "INSERT INTO cookies VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![host_key, name, "", blob, "/", 0i64, 0i64, 0i64, -1i64],
+        )
+        .unwrap();
     }
 }
 
@@ -642,7 +721,12 @@ fn clear_browser_roots() {
 
 /// The CLI binary with the test home: (code, stdout, stderr).
 async fn cli(args: &[&str]) -> (i32, String, String) {
-    let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_api-anything")).args(args).env("API_ANYTHING_HOME", HOME.path()).output().await.unwrap();
+    let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_api-anything"))
+        .args(args)
+        .env("API_ANYTHING_HOME", HOME.path())
+        .output()
+        .await
+        .unwrap();
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
@@ -654,8 +738,12 @@ fn a_cookie_set_on_a_redirect_hop_is_sent_on_the_next_hop_consent_session_bootst
         save(&fx, "boot", vec![rd(&fx, "list", "/bootstrap", json!({}))]);
         let r = call("boot", "list", args(json!({})), t1()).await;
         let second = fx.hits().into_iter().find(|h| h.url == "/needs-step");
-        assert_eq!(second.as_ref().and_then(|h| h.h("cookie")), Some("step=1"), "the Set-Cookie of the 302 must ride on the follow-up request");
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert_eq!(
+            second.as_ref().and_then(|h| h.h("cookie")),
+            Some("step=1"),
+            "the Set-Cookie of the 302 must ride on the follow-up request"
+        );
+        assert!(r.ok, "{}", j(&r));
     });
 }
 
@@ -665,10 +753,13 @@ fn a_set_cookie_from_a_tier_1_answer_is_persisted_so_the_next_call_presents_the_
         save(&fx, "rot", vec![rd(&fx, "list", "/rotate", json!({}))]);
         fx.set_rotate(0);
         let a = call("rot", "list", args(json!({})), t1()).await;
-        assert_eq!(a.ok, true, "{}", j(&a));
-        assert!(load_session("rot").unwrap().cookies.iter().any(|c| c.name == "tok" && c.value == "1"), "tok=1 from the answer is in the jar");
+        assert!(a.ok, "{}", j(&a));
+        assert!(
+            load_session("rot").unwrap().cookies.iter().any(|c| c.name == "tok" && c.value == "1"),
+            "tok=1 from the answer is in the jar"
+        );
         let b = call("rot", "list", args(json!({})), t1()).await;
-        assert_eq!(b.ok, true, "{}", j(&b));
+        assert!(b.ok, "{}", j(&b));
     });
 }
 
@@ -710,9 +801,13 @@ fn cross_origin_redirects_drop_authorization_refd_headers_and_cookies_303_turns_
                 }),
             ],
         );
-        save_session("xo", &session(vec![cookie("ct0", "SECRET-CSRF-VALUE-123", "127.0.0.1")], &[("authorization", "Bearer SECRET-BEARER")])).unwrap();
+        save_session(
+            "xo",
+            &session(vec![cookie("ct0", "SECRET-CSRF-VALUE-123", "127.0.0.1")], &[("authorization", "Bearer SECRET-BEARER")]),
+        )
+        .unwrap();
         let r = call("xo", "me", args(json!({})), t1()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         let h = fx.other_hits()[0].clone();
         assert_eq!(h.h("authorization"), None);
         assert_eq!(h.h("x-csrf-token"), None);
@@ -721,7 +816,7 @@ fn cross_origin_redirects_drop_authorization_refd_headers_and_cookies_303_turns_
 
         fx.clear_other_hits();
         let w = call("xo", "post307", args(json!({})), writes(t1())).await;
-        assert_eq!(w.ok, false, "{}", j(&w));
+        assert!(!w.ok, "{}", j(&w));
         assert!(reason(&w).contains("it would send this write again"), "{w:?}");
         assert_eq!(fx.other_hits().len(), 0, "a 307 would send the write a second time");
 
@@ -745,9 +840,14 @@ fn cross_origin_redirects_drop_authorization_refd_headers_and_cookies_303_turns_
             )],
         );
         let q = call("xoread", "query", args(json!({})), t1()).await;
-        assert_eq!(q.ok, true, "{}", j(&q));
-        let seen: Vec<(String, String, Option<String>)> = fx.other_hits().iter().map(|h| (h.method.clone(), h.body.clone(), h.h("authorization").map(String::from))).collect();
-        assert_eq!(seen, vec![("POST".to_string(), "{}".to_string(), None)], "307 keeps the method and body; even a literal authorization is dropped cross-origin");
+        assert!(q.ok, "{}", j(&q));
+        let seen: Vec<(String, String, Option<String>)> =
+            fx.other_hits().iter().map(|h| (h.method.clone(), h.body.clone(), h.h("authorization").map(String::from))).collect();
+        assert_eq!(
+            seen,
+            vec![("POST".to_string(), "{}".to_string(), None)],
+            "307 keeps the method and body; even a literal authorization is dropped cross-origin"
+        );
     });
 }
 
@@ -769,8 +869,13 @@ fn a_write_sent_on_by_303_to_a_page_that_answers_401_ran_it_is_not_sent_again() 
         );
         fx.clear_hits();
         let r = call("prg401", "save", args(json!({})), writes(t1())).await;
-        assert_eq!(fx.hits().iter().map(|h| format!("{} {}", h.method, h.url)).collect::<Vec<_>>(), vec!["POST /hop?s=303&to=/api/token", "GET /api/token"], "{}", j(&r));
-        assert_eq!(r.ok, false);
+        assert_eq!(
+            fx.hits().iter().map(|h| format!("{} {}", h.method, h.url)).collect::<Vec<_>>(),
+            vec!["POST /hop?s=303&to=/api/token", "GET /api/token"],
+            "{}",
+            j(&r)
+        );
+        assert!(!r.ok);
         assert!(next(&r).contains("check the site"), "{r:?}");
         assert!(!next(&r).contains("retry once"), "{r:?}");
     });
@@ -785,7 +890,7 @@ fn a_cross_origin_307_is_not_followed_when_a_body_slot_holds_a_session_value_wha
         let r = call("xob64", "post", args(json!({})), t1()).await;
         assert!(unwrapped(&fx.hits()[0].body).contains("SECRET-BODY-TOKEN-123"), "the site itself gets its token");
         assert_eq!(fx.other_hits().len(), 0, "the other origin got {:?}", fx.other_hits().first().map(|h| h.body.clone()));
-        assert_eq!(r.ok, false, "{}", j(&r));
+        assert!(!r.ok, "{}", j(&r));
         assert!(matches(r"not following the HTTP 307 redirect to http://localhost", reason(&r)), "{r:?}");
         assert!(matches(r"^do not retry: .* re-learn it with api-anything add xob64 post", next(&r)), "{r:?}");
         assert!(!next(&r).contains("retry once"));
@@ -816,7 +921,7 @@ fn a_cross_origin_redirect_drops_a_header_whose_ref_sits_under_a_json_layer() {
         );
         save_session("xowrap", &session(vec![cookie("ct0", "SECRET-CSRF-VALUE-123", "127.0.0.1")], &[])).unwrap();
         let r = call("xowrap", "me", args(json!({})), t1()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert!(fx.hits()[0].h("x-wrap").unwrap_or("").contains("SECRET-CSRF-VALUE-123"), "the site itself gets it");
         assert_eq!(fx.other_hits()[0].h("x-wrap"), None);
         assert_eq!(fx.other_hits()[0].h("x-keep"), Some("1"));
@@ -828,7 +933,7 @@ fn a_redirect_loop_ends_with_a_non_ok_answer_instead_of_hanging() {
     edge(|fx| async move {
         save(&fx, "loop", vec![rd(&fx, "l", "/loop", json!({}))]);
         let r = call("loop", "l", args(json!({})), t1()).await;
-        assert_eq!(r.ok, false);
+        assert!(!r.ok);
         assert_eq!(r.class, Class::Error);
         assert!(fx.hits().len() <= 6);
     });
@@ -917,7 +1022,7 @@ fn an_mb_scale_json_array_comes_back_capped_at_an_item_boundary_with_a_truncatio
     edge(|fx| async move {
         save(&fx, "big", vec![rd(&fx, "b", "/huge", json!({}))]);
         let r = call("big", "b", args(json!({})), t1()).await;
-        assert_eq!(r.ok, true);
+        assert!(r.ok);
         let n = r.data.as_ref().and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0);
         assert!(n > 10 && n < 50_000, "{n} items");
         let len = j(&r).to_string().len();
@@ -931,10 +1036,15 @@ fn an_array_whose_first_item_alone_exceeds_the_cap_still_returns_some_data() {
     edge(|fx| async move {
         save(&fx, "fat", vec![rd(&fx, "f", "/fat-item", json!({}))]);
         let r = call("fat", "f", args(json!({})), t1()).await;
-        assert_eq!(r.ok, true);
+        assert!(r.ok);
         assert!(r.truncated.is_some());
         let n = r.data.as_ref().and_then(|d| d.as_array()).map(|a| a.len());
-        assert!(n.map(|n| n >= 1).unwrap_or(false), "data: {} / {:?}", j(&r.data).to_string().chars().take(80).collect::<String>(), r.truncated);
+        assert!(
+            n.map(|n| n >= 1).unwrap_or(false),
+            "data: {} / {:?}",
+            j(&r.data).to_string().chars().take(80).collect::<String>(),
+            r.truncated
+        );
     });
 }
 
@@ -951,7 +1061,12 @@ fn capping_an_object_with_a_big_nested_array_returns_a_json_value_not_cut_json_t
     let timeline: Vec<Value> = (0..2000).map(|i| json!({"id": i, "text": "tweet text here"})).collect();
     let value = json!({"user": {"id": 1}, "timeline": timeline});
     let c = cap_output(&value, 20_000);
-    assert!(c.data.is_object(), "got a {}: {}", api_anything::extract::type_name(&c.data), c.data.to_string().chars().take(60).collect::<String>());
+    assert!(
+        c.data.is_object(),
+        "got a {}: {}",
+        api_anything::extract::type_name(&c.data),
+        c.data.to_string().chars().take(60).collect::<String>()
+    );
 }
 
 #[test]
@@ -1066,7 +1181,10 @@ fn http_429_reports_the_servers_retry_after_seconds_and_http_date() {
         save(
             &fx,
             "rl",
-            vec![rd(&fx, "s", "/r429?ra=120", json!({})), rd(&fx, "d", &format!("/r429?ra={}", enc("Wed, 21 Oct 2026 07:28:00 GMT")), json!({}))],
+            vec![
+                rd(&fx, "s", "/r429?ra=120", json!({})),
+                rd(&fx, "d", &format!("/r429?ra={}", enc("Wed, 21 Oct 2026 07:28:00 GMT")), json!({})),
+            ],
         );
         let s = call("rl", "s", args(json!({})), t1()).await;
         assert_eq!(s.class, Class::Rate);
@@ -1109,24 +1227,40 @@ fn challenge_pages_from_every_listed_vendor_are_blocked_whatever_the_status() {
     let cases: Vec<(&str, Observed)> = vec![
         (
             "Cloudflare 403",
-            obs(403, "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt={}</script></body></html>", "text/html", &[]),
+            obs(
+                403,
+                "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt={}</script></body></html>",
+                "text/html",
+                &[],
+            ),
         ),
         ("Cloudflare cf-mitigated", obs(403, "", "text/html", &[("cf-mitigated", "challenge")])),
         ("Cloudflare 503", obs(503, "<title>Just a moment...</title>", "text/html", &[])),
         ("Cloudflare WAF", obs(403, "<title>Attention Required! | Cloudflare</title>", "text/html", &[])),
         (
             "Akamai",
-            obs(403, "<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY>Reference #18.1 <a href=\"https://errors.edgesuite.net/18.1\">", "text/html", &[]),
+            obs(
+                403,
+                "<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY>Reference #18.1 <a href=\"https://errors.edgesuite.net/18.1\">",
+                "text/html",
+                &[],
+            ),
         ),
         ("DataDome JSON", obs(403, "{\"url\":\"https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAA\"}", JSON_CT, &[])),
-        ("PerimeterX JSON", obs(403, "{\"appId\":\"PXu6b0qd2S\",\"blockScript\":\"/u6b0qd2S/captcha/captcha.js\",\"vid\":\"x\"}", JSON_CT, &[])),
+        (
+            "PerimeterX JSON",
+            obs(403, "{\"appId\":\"PXu6b0qd2S\",\"blockScript\":\"/u6b0qd2S/captcha/captcha.js\",\"vid\":\"x\"}", JSON_CT, &[]),
+        ),
         ("PerimeterX 200 page", obs(200, "<html><body><div id=px-captcha></div>Press & Hold</body></html>", "text/html", &[])),
         ("reCAPTCHA 200 interstitial", obs(200, "<html><div class=\"g-recaptcha\" data-sitekey=\"x\"></div></html>", "text/html", &[])),
     ];
     for (name, r) in &cases {
         assert_eq!(classify(&o, r).class, Class::Blocked, "{name}");
     }
-    assert_eq!(classify(&o, &obs(429, "<title>Access denied | Error 1015</title> You are being rate limited", "text/html", &[])).class, Class::Rate);
+    assert_eq!(
+        classify(&o, &obs(429, "<title>Access denied | Error 1015</title> You are being rate limited", "text/html", &[])).class,
+        Class::Rate
+    );
 }
 
 #[test]
@@ -1159,15 +1293,22 @@ fn http_400_with_a_csrf_marker_is_auth_design_400_403_with_login_or_csrf_markers
 fn http_5xx_is_error_retry_hint_4xx_without_markers_is_not_auth() {
     assert_eq!(classify(&gql_op(json!({})), &obs(503, "Service Unavailable", "text/plain", &[("retry-after", "30")])).class, Class::Error);
     assert_eq!(classify(&gql_op(json!({})), &obs(500, "{\"error\":\"internal\"}", JSON_CT, &[])).class, Class::Error);
-    assert_eq!(classify(&gql_op(json!({})), &obs(403, "{\"message\":\"CSRF token missing or incorrect.\"}", JSON_CT, &[])).class, Class::Auth);
+    assert_eq!(
+        classify(&gql_op(json!({})), &obs(403, "{\"message\":\"CSRF token missing or incorrect.\"}", JSON_CT, &[])).class,
+        Class::Auth
+    );
     assert_eq!(classify(&gql_op(json!({})), &obs(401, "", JSON_CT, &[])).class, Class::Auth);
 }
 
 #[test]
 fn json_served_as_text_html_is_still_json_an_html_login_page_where_json_was_expected_is_auth() {
-    assert_eq!(classify(&gql_op(json!({})), &obs(200, "{\"data\":{\"user\":{\"id\":1}}}", "text/html; charset=utf-8", &[])).class, Class::Ok);
     assert_eq!(
-        classify(&gql_op(json!({})), &obs(200, "<!doctype html><form><input name=u><input type=\"password\"></form>", "text/html", &[])).class,
+        classify(&gql_op(json!({})), &obs(200, "{\"data\":{\"user\":{\"id\":1}}}", "text/html; charset=utf-8", &[])).class,
+        Class::Ok
+    );
+    assert_eq!(
+        classify(&gql_op(json!({})), &obs(200, "<!doctype html><form><input name=u><input type=\"password\"></form>", "text/html", &[]))
+            .class,
         Class::Auth
     );
 }
@@ -1175,7 +1316,10 @@ fn json_served_as_text_html_is_still_json_an_html_login_page_where_json_was_expe
 #[test]
 fn graphql_errors_with_null_data_map_to_rate_auth_drift_error() {
     let o = gql_op(json!({}));
-    assert_eq!(classify(&o, &obs(200, "{\"errors\":[{\"message\":\"Rate limit exceeded\"}],\"data\":null}", JSON_CT, &[])).class, Class::Rate);
+    assert_eq!(
+        classify(&o, &obs(200, "{\"errors\":[{\"message\":\"Rate limit exceeded\"}],\"data\":null}", JSON_CT, &[])).class,
+        Class::Rate
+    );
     assert_eq!(classify(&o, &obs(200, "{\"errors\":[{\"message\":\"Bad guest token\"}]}", JSON_CT, &[])).class, Class::Auth);
     assert_eq!(classify(&o, &obs(200, "{\"errors\":[{\"message\":\"PersistedQueryNotFound\"}]}", JSON_CT, &[])).class, Class::Drift);
 }
@@ -1183,22 +1327,38 @@ fn graphql_errors_with_null_data_map_to_rate_auth_drift_error() {
 #[test]
 fn graphql_partial_data_errors_next_to_a_null_extract_target_are_not_a_successful_null() {
     let o = gql_op(json!({}));
-    let rate = judge(&o, &obs(200, "{\"data\":{\"user\":null},\"errors\":[{\"message\":\"Rate limit exceeded\",\"path\":[\"user\"]}]}", JSON_CT, &[]));
+    let rate = judge(
+        &o,
+        &obs(200, "{\"data\":{\"user\":null},\"errors\":[{\"message\":\"Rate limit exceeded\",\"path\":[\"user\"]}]}", JSON_CT, &[]),
+    );
     assert_eq!(rate.class, Class::Rate, "{rate:?}");
     let nf = judge(
         &o,
-        &obs(200, "{\"data\":{\"user\":null},\"errors\":[{\"type\":\"NOT_FOUND\",\"path\":[\"user\"],\"message\":\"Could not resolve to a User with the login of 'zz'.\"}]}", JSON_CT, &[]),
+        &obs(
+            200,
+            "{\"data\":{\"user\":null},\"errors\":[{\"type\":\"NOT_FOUND\",\"path\":[\"user\"],\"message\":\"Could not resolve to a User with the login of 'zz'.\"}]}",
+            JSON_CT,
+            &[],
+        ),
     );
     assert_ne!(nf.class, Class::Ok, "{nf:?}");
     // errors on an unrelated field with the target present: still ok
-    assert_eq!(judge(&o, &obs(200, "{\"data\":{\"user\":{\"id\":1},\"ads\":null},\"errors\":[{\"message\":\"x\",\"path\":[\"ads\"]}]}", JSON_CT, &[])).class, Class::Ok);
+    assert_eq!(
+        judge(
+            &o,
+            &obs(200, "{\"data\":{\"user\":{\"id\":1},\"ads\":null},\"errors\":[{\"message\":\"x\",\"path\":[\"ads\"]}]}", JSON_CT, &[])
+        )
+        .class,
+        Class::Ok
+    );
 }
 
 #[test]
 fn a_write_answered_2xx_is_ok_even_when_the_landing_page_has_a_password_field_it_ran() {
     let w = gql_op(json!({"readOnly": false, "response": {"format": "json"}}));
     assert_eq!(classify(&w, &obs(204, "", "", &[])).class, Class::Ok);
-    let saved = judge(&w, &obs(200, "<!doctype html><h1>Settings saved</h1><form><input type=\"password\" name=\"new\"></form>", "text/html", &[]));
+    let saved =
+        judge(&w, &obs(200, "<!doctype html><h1>Settings saved</h1><form><input type=\"password\" name=\"new\"></form>", "text/html", &[]));
     assert_eq!(saved.class, Class::Ok, "{saved:?}");
 }
 
@@ -1222,7 +1382,7 @@ fn http_404_for_an_unknown_entity_on_a_query_param_api_is_input_after_the_exampl
             )],
         );
         let ok = call("nf404", "user", args(json!({"name": "alice"})), t1()).await;
-        assert_eq!(ok.ok, true, "{}", j(&ok));
+        assert!(ok.ok, "{}", j(&ok));
         let r = call("nf404", "user", args(json!({"name": "zz_nobody"})), t1()).await;
         assert_eq!(r.class, Class::Input, "{}", j(&r));
     });
@@ -1234,7 +1394,7 @@ fn a_remembered_escalation_does_not_stop_max_tier_1_from_trying_tier_1() {
         save(&fx, "mem", vec![rd(&fx, "l", "/plain", json!({}))]);
         remember_tier("mem", "l", Some(2));
         let r = call("mem", "l", args(json!({})), t1()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(1));
     });
 }
@@ -1281,7 +1441,10 @@ fn a_numeric_arg_in_a_form_that_would_be_rounded_past_2_53_is_input_and_nothing_
         assert_eq!(r.class, Class::Input, "{}", j(&r));
         assert!(reason(&r).contains("would lose precision"), "{r:?}");
         assert_eq!(fx.hits().len(), 0, "nothing sent");
-        assert_eq!(call("big", "items", args(json!({"page": "9007199254740993"})), t1()).await.data, Some(json!([{"page": "9007199254740993"}])));
+        assert_eq!(
+            call("big", "items", args(json!({"page": "9007199254740993"})), t1()).await.data,
+            Some(json!([{"page": "9007199254740993"}]))
+        );
     });
 }
 
@@ -1383,7 +1546,11 @@ fn cli_a_write_without_allow_writes_is_refused_dry_redacts_every_credential_and_
                 }),
             )],
         );
-        save_session("dry", &session(vec![cookie("ct0", "LIVE-CSRF-SECRET-1", "127.0.0.1")], &[("authorization", "Bearer LIVE-BEARER-SECRET")])).unwrap();
+        save_session(
+            "dry",
+            &session(vec![cookie("ct0", "LIVE-CSRF-SECRET-1", "127.0.0.1")], &[("authorization", "Bearer LIVE-BEARER-SECRET")]),
+        )
+        .unwrap();
         let (code, out, _) = cli(&["call", "wr", "follow"]).await;
         assert_eq!(code, 1);
         assert!(out.contains("refused"), "{out}");
@@ -1479,7 +1646,8 @@ fn tier_2_follows_tier_1s_redirect_policy_a_cross_origin_307_gets_no_refd_header
                 wrapped(&fx, "/away?s=307", json!({"minTier": 2, "readOnly": true})),
             ],
         );
-        save_session("t2xo", &session(vec![cookie("ct", "SECRET-CSRF-VALUE-123", "127.0.0.1")], &[("token", "SECRET-BODY-TOKEN-123")])).unwrap();
+        save_session("t2xo", &session(vec![cookie("ct", "SECRET-CSRF-VALUE-123", "127.0.0.1")], &[("token", "SECRET-BODY-TOKEN-123")]))
+            .unwrap();
         // the other origin approves every CORS preflight, so only the policy stands between it and the request
         let landed = |fx: &Fx| fx.other_hits().into_iter().filter(|h| h.method != "OPTIONS").collect::<Vec<_>>();
         let r = call("t2xo", "me", args(json!({})), o2()).await;
@@ -1487,7 +1655,7 @@ fn tier_2_follows_tier_1s_redirect_policy_a_cross_origin_307_gets_no_refd_header
         assert_eq!(landed(&fx).len(), 1, "{}", j(&r));
         assert_eq!(landed(&fx)[0].h("x-csrf"), None, "the CSRF header went to another origin");
         assert_eq!(landed(&fx)[0].h("x-keep"), Some("1"));
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(2));
 
         fx.clear_hits();
@@ -1495,7 +1663,7 @@ fn tier_2_follows_tier_1s_redirect_policy_a_cross_origin_307_gets_no_refd_header
         let w = call("t2xo", "post", args(json!({})), o2()).await;
         assert!(unwrapped(&fx.hits().iter().find(|h| h.method == "POST").unwrap().body).contains("SECRET-BODY-TOKEN-123"));
         assert_eq!(landed(&fx).len(), 0, "the other origin got {:?}", landed(&fx).first().map(|h| h.body.clone()));
-        assert_eq!(w.ok, false, "{}", j(&w));
+        assert!(!w.ok, "{}", j(&w));
         assert_eq!(w.tier, Some(2));
         assert!(matches(r"not following the HTTP 307 redirect to http://localhost", reason(&w)), "{w:?}");
         assert!(matches(r"^do not retry: .* re-learn it with api-anything add t2xo post", next(&w)), "{w:?}");
@@ -1537,20 +1705,33 @@ fn tier_2_same_origin_redirects_a_hops_cookie_rides_on_the_next_307_keeps_post_a
             );
             v
         };
-        save(&fx, "t2hop", vec![rd(&fx, "boot", "/bootstrap", json!({"minTier": 2})), post(307), post(303), rd(&fx, "loop", "/loop", json!({"minTier": 2}))]);
+        save(
+            &fx,
+            "t2hop",
+            vec![
+                rd(&fx, "boot", "/bootstrap", json!({"minTier": 2})),
+                post(307),
+                post(303),
+                rd(&fx, "loop", "/loop", json!({"minTier": 2})),
+            ],
+        );
         clear_profile_cookie_named("step").await;
         let r = call("t2hop", "boot", args(json!({})), o2()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(2));
         assert!(matches(r"(^|; )step=1", fx.hits().iter().find(|h| h.url == "/needs-step").and_then(|h| h.h("cookie")).unwrap_or("")));
 
         for (s, method, body, ct) in [(307u16, "POST", "{\"id\":\"1\"}", Some("application/json")), (303, "GET", "", None)] {
             fx.clear_hits();
             let w = call("t2hop", &format!("post{s}"), args(json!({})), writes(o2())).await;
-            assert_eq!(w.ok, true, "{}", j(&w));
+            assert!(w.ok, "{}", j(&w));
             let landed = fx.hits().into_iter().find(|h| h.url == "/landed");
             assert_eq!(
-                (landed.as_ref().map(|h| h.method.clone()), landed.as_ref().map(|h| h.body.clone()), landed.as_ref().and_then(|h| h.h("content-type").map(String::from))),
+                (
+                    landed.as_ref().map(|h| h.method.clone()),
+                    landed.as_ref().map(|h| h.body.clone()),
+                    landed.as_ref().and_then(|h| h.h("content-type").map(String::from))
+                ),
                 (Some(method.to_string()), Some(body.to_string()), ct.map(String::from)),
                 "{s}"
             );
@@ -1559,13 +1740,16 @@ fn tier_2_same_origin_redirects_a_hops_cookie_rides_on_the_next_307_keeps_post_a
 
         fx.clear_hits();
         let lp = call("t2hop", "loop", args(json!({})), o2()).await;
-        assert_eq!(lp.ok, false);
+        assert!(!lp.ok);
         assert_eq!(lp.class, Class::Error, "{}", j(&lp));
         assert!(fx.hits().len() <= 21, "{} requests", fx.hits().len());
 
         // Post/Redirect/Get to a page that refuses scripts: the 403 answers the redirect's follow-up, so the write ran
         let mut follow = post(303);
-        merge(&mut follow, json!({"name": "follow", "request": {"method": "POST", "url": format!("{}/api/follow", fx.base), "headers": {}, "body": "x=1"}}));
+        merge(
+            &mut follow,
+            json!({"name": "follow", "request": {"method": "POST", "url": format!("{}/api/follow", fx.base), "headers": {}, "body": "x=1"}}),
+        );
         save(&fx, "t2prg", vec![follow]);
         fx.clear_hits();
         let ran = call("t2prg", "follow", args(json!({})), writes(o2())).await;
@@ -1601,8 +1785,12 @@ fn a_location_that_copies_a_token_from_inside_a_header_is_not_followed_to_anothe
             );
             save_session(&name, &session(vec![], &[("token", "SECRET-token-1234")])).unwrap();
             let r = call(&name, "me", args(json!({})), o).await;
-            assert_eq!(fx.other_hits().iter().filter(|h| h.method != "OPTIONS").map(|h| h.url.clone()).collect::<Vec<_>>(), Vec::<String>::new(), "the token reached the other origin in the address");
-            assert_eq!(r.ok, false, "{}", j(&r));
+            assert_eq!(
+                fx.other_hits().iter().filter(|h| h.method != "OPTIONS").map(|h| h.url.clone()).collect::<Vec<_>>(),
+                Vec::<String>::new(),
+                "the token reached the other origin in the address"
+            );
+            assert!(!r.ok, "{}", j(&r));
             assert!(reason(&r).contains("not following the HTTP 302 redirect"), "{r:?}");
         }
         .boxed_local()
@@ -1643,7 +1831,7 @@ fn a_post_redirected_to_a_get_loses_every_body_header_with_its_body(tier: u8) {
                     )],
                 );
                 let r = call(&name, "q", args(json!({})), o.clone()).await;
-                assert_eq!(r.ok, true, "HTTP {s}: {}", j(&r));
+                assert!(r.ok, "HTTP {s}: {}", j(&r));
             }
         }
         .boxed_local()
@@ -1719,7 +1907,7 @@ fn a_session_value_no_header_can_carry_fails_naming_the_header_never_the_value(t
             save_session(&name, &session(vec![], &[("tok", "SECRET-source-token-1234\r\nextra")])).unwrap();
             fx.clear_hits();
             let r = call(&name, "me", args(json!({})), o).await;
-            assert_eq!(r.ok, false);
+            assert!(!r.ok);
             assert!(!matches(r"SECRET|extra", &j(&r).to_string()), "{}", j(&r));
             assert!(reason(&r).contains("the x-token header"), "{r:?}");
             assert!(matches(r"api-anything login brk\d", next(&r)), "{r:?}");
@@ -1751,7 +1939,8 @@ fn a_write_is_not_sent_a_second_time_by_a_redirect_and_the_result_says_where_it_
                 merge(&mut v, json!({"readOnly": false, "request": request}));
                 v
             };
-            let sends = |fx: &Fx| fx.hits().iter().map(|h| h.url.clone()).filter(|u| matches(r"^/(again|hop|landed)", u)).collect::<Vec<_>>();
+            let sends =
+                |fx: &Fx| fx.hits().iter().map(|h| h.url.clone()).filter(|u| matches(r"^/(again|hop|landed)", u)).collect::<Vec<_>>();
             let name = format!("once{tier}");
             save(
                 &fx,
@@ -1769,14 +1958,24 @@ fn a_write_is_not_sent_a_second_time_by_a_redirect_and_the_result_says_where_it_
                 fx.clear_hits();
                 let r = call(&name, op, args(json!({})), writes(o.clone())).await;
                 assert_eq!(sends(&fx).len(), 1, "{op} was sent to {:?}: {}", sends(&fx), j(&r));
-                assert_eq!(r.ok, false, "{op}: {}", j(&r));
-                assert_eq!(r.reason.as_deref(), Some(format!("not following the HTTP {status} redirect to {}: it would send this write again", fx.base).as_str()), "{op}");
-                assert!(matches(r"^the write was sent once.*check the site first.*Do not retry.*api-anything add once\d \w+ \.\.\. --write", next(&r)), "{r:?}");
+                assert!(!r.ok, "{op}: {}", j(&r));
+                assert_eq!(
+                    r.reason.as_deref(),
+                    Some(format!("not following the HTTP {status} redirect to {}: it would send this write again", fx.base).as_str()),
+                    "{op}"
+                );
+                assert!(
+                    matches(
+                        r"^the write was sent once.*check the site first.*Do not retry.*api-anything add once\d \w+ \.\.\. --write",
+                        next(&r)
+                    ),
+                    "{r:?}"
+                );
             }
             // a GET write's landing page is another request: followed
             fx.clear_hits();
             let prg = call(&name, "prg", args(json!({})), writes(o)).await;
-            assert_eq!(prg.ok, true, "{}", j(&prg));
+            assert!(prg.ok, "{}", j(&prg));
             assert_eq!(sends(&fx), vec!["/hop?s=302", "/landed"]);
         }
         .boxed_local()
@@ -1813,7 +2012,7 @@ fn a_chain_is_followed_up_to_cap_redirects_one_more_ends_saying_so_and_how_to_go
 
             fx.clear_hits();
             let r = call(&name, "round", args(json!({})), o).await;
-            assert_eq!(r.ok, false, "{}", j(&r));
+            assert!(!r.ok, "{}", j(&r));
             assert!(matches(&format!(r"^stopped after {cap} redirects, the last one to http://127\.0\.0\.1:\d+$"), reason(&r)), "{r:?}");
             assert!(matches(r"do not retry.*api-anything add chain\d round", next(&r)), "{r:?}");
             assert_eq!(fx.hits().iter().filter(|h| h.url == "/loop").count(), cap + 1);
@@ -1840,7 +2039,7 @@ fn a_get_write_sent_on_to_a_new_address_at_each_hop_reaches_the_server_no_more_t
             save(&fx, &name, vec![rd(&fx, "vote", "/vote/0", json!({"minTier": tier, "readOnly": false}))]);
             fx.clear_hits();
             let r = call(&name, "vote", args(json!({})), writes(o)).await;
-            assert_eq!(r.ok, false, "{}", j(&r));
+            assert!(!r.ok, "{}", j(&r));
             assert_eq!(fx.hits().iter().filter(|h| h.url.starts_with("/vote")).count(), cap + 1);
             assert!(next(&r).contains("check the site first"), "{r:?}");
         }
@@ -1898,7 +2097,7 @@ fn tier_2_refuses_a_redirect_it_cannot_tell_from_anothers_the_origin_page_sent_t
         save_site(&site(json!({"name": "twin", "baseUrl": base, "operations": [query]}))).unwrap();
         save_session("twin", &session(vec![], &[("token", "SECRET-query-token-123")])).unwrap();
         let r = call("twin", "query", args(json!({})), o2()).await;
-        assert_eq!(r.ok, false, "{}", j(&r));
+        assert!(!r.ok, "{}", j(&r));
         assert!(matches(r"not following a redirect from http://127\.0\.0\.1:\d+: .* cannot be told apart", reason(&r)), "{r:?}");
         assert!(!j(&r).to_string().contains("SECRET-query-token-123"), "the result carries the session's token");
         let landed = landed.lock().unwrap().clone();
@@ -1966,13 +2165,16 @@ fn auth_at_tier_2_re_imports_the_browser_session_into_the_profile_and_retries_on
         };
         set_browser_roots(root.path());
         sign_in("first");
-        assert_eq!(import_session("t2auth", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source), Some("chrome:Default".to_string()));
+        assert_eq!(
+            import_session("t2auth", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source),
+            Some("chrome:Default".to_string())
+        );
         assert_eq!(call("t2auth", "me", args(json!({})), o2()).await.data, Some(json!([{"me": "first"}])));
 
         sign_in("second");
         fx.clear_hits();
         let r = call("t2auth", "me", args(json!({})), o2()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(2));
         assert_eq!(r.data, Some(json!([{"me": "second"}])));
         assert_eq!(me_count(&fx), 2, "one retry");
@@ -2018,7 +2220,8 @@ fn a_tier_3_reads_own_request_may_be_sent_on_by_a_307_to_its_own_origin_or_anoth
             fx.clear_hits();
             fx.clear_other_hits();
             let r = call(name, "q", args(json!({})), opts(Some(3), Some(5000))).await;
-            let posts = |hits: Vec<Hit>| hits.iter().filter(|h| h.method == "POST").map(|h| format!("{} {}", h.url, h.body)).collect::<Vec<_>>();
+            let posts =
+                |hits: Vec<Hit>| hits.iter().filter(|h| h.method == "POST").map(|h| format!("{} {}", h.url, h.body)).collect::<Vec<_>>();
             // the check is reached, wherever it is, and then the page asks for the data
             let mut all = posts(fx.hits());
             all.extend(posts(fx.other_hits()));
@@ -2037,7 +2240,12 @@ fn auth_at_tier_3_re_imports_the_browser_session_into_the_profile_and_retries_on
         save(
             &fx,
             "t3auth",
-            vec![rd(&fx, "me", "/api/me", json!({"minTier": 3, "trigger": {"url": format!("{}/me-page", fx.base)}, "match": {"path": "/api/me"}}))],
+            vec![rd(
+                &fx,
+                "me",
+                "/api/me",
+                json!({"minTier": 3, "trigger": {"url": format!("{}/me-page", fx.base)}, "match": {"path": "/api/me"}}),
+            )],
         );
         let root = tempfile::Builder::new().prefix("everyday-browser-").tempdir_in(HOME.path()).unwrap();
         let sign_in = |sid: &str| {
@@ -2047,13 +2255,16 @@ fn auth_at_tier_3_re_imports_the_browser_session_into_the_profile_and_retries_on
         let o = opts(None, Some(5000));
         set_browser_roots(root.path());
         sign_in("first");
-        assert_eq!(import_session("t3auth", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source), Some("chrome:Default".to_string()));
+        assert_eq!(
+            import_session("t3auth", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source),
+            Some("chrome:Default".to_string())
+        );
         assert_eq!(call("t3auth", "me", args(json!({})), o.clone()).await.data, Some(json!([{"me": "first"}])));
 
         sign_in("second");
         fx.clear_hits();
         let r = call("t3auth", "me", args(json!({})), o.clone()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(3));
         assert_eq!(r.data, Some(json!([{"me": "second"}])));
         assert_eq!(me_count(&fx), 2, "one retry");
@@ -2092,16 +2303,23 @@ fn a_tier_3_write_that_ran_and_was_then_redirected_to_a_refusal_is_not_sent_agai
         let root = tempfile::Builder::new().prefix("everyday-browser-").tempdir_in(HOME.path()).unwrap();
         make_chromium_db(&root.path().join("Default"), &[("127.0.0.1", "sid", "any")], "pw");
         set_browser_roots(root.path());
-        assert_eq!(import_session("t3write", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source), Some("chrome:Default".to_string()));
+        assert_eq!(
+            import_session("t3write", &format!("{}/", fx.base), ImportOptions::new()).await.unwrap().map(|i| i.source),
+            Some("chrome:Default".to_string())
+        );
         fx.clear_hits();
         let r = call("t3write", "save", args(json!({})), writes(opts(None, Some(5000)))).await;
         let saves = fx.hits().iter().filter(|h| h.method == "POST" && h.url == "/api/save").count();
         assert_eq!(saves, 1, "the write was sent {saves} times; result {}", j(&r));
-        assert_eq!(r.ok, false);
+        assert!(!r.ok);
         assert!(next(&r).contains("check the site"), "{r:?}");
         assert!(!next(&r).contains("retry once"), "{r:?}");
         // the server's 307 would have the page send the write a second time: stopped, and said
-        assert_eq!(fx.hits().iter().filter(|h| h.url == "/api/save?login=1").map(|h| h.method.clone()).collect::<Vec<_>>(), Vec::<String>::new(), "the redirect sent the write on");
+        assert_eq!(
+            fx.hits().iter().filter(|h| h.url == "/api/save?login=1").map(|h| h.method.clone()).collect::<Vec<_>>(),
+            Vec::<String>::new(),
+            "the redirect sent the write on"
+        );
         assert_eq!(r.class, Class::Error, "{}", j(&r));
         assert!(matches(r"^the site answered this write with a redirect that would send it again: stopped", reason(&r)), "{r:?}");
         assert!(matches(r"api-anything add t3write save \.\.\. --write", next(&r)), "{r:?}");
@@ -2133,7 +2351,7 @@ fn a_tier_3_write_whose_page_sends_it_twice_is_performed_once_and_the_result_say
         let posts = |path: &str| fx.hits().iter().filter(|h| h.method == "POST" && h.url == path).count();
         assert_eq!(posts("/api/double"), 1, "the write reached the server {} times", posts("/api/double"));
         assert_eq!(posts("/api/companion"), 1, "what else the trigger sends is left alone");
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(3));
         assert!(matches(r"sent this write 2 times.* stopped", reason(&r)), "{r:?}");
     });
@@ -2160,7 +2378,7 @@ fn auth_at_tier_2_from_a_stale_cookie_behind_a_header_ref_the_jar_is_refreshed_f
         add_cookies_to_profile(&[cookie("ct", "fresh", "127.0.0.1")], &profile_dir()).await.unwrap();
         save_session("t2csrf", &session(vec![cookie("ct", "stale", "127.0.0.1")], &[])).unwrap();
         let r = call("t2csrf", "items", args(json!({})), o2()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(2));
         assert_eq!(r.data, Some(json!([{"ct": "fresh"}])));
         assert_eq!(fx.hits().iter().filter(|h| h.url == "/api/csrf").count(), 2, "one retry");
@@ -2188,7 +2406,7 @@ fn auth_at_tier_2_a_cookie_ref_the_refreshed_jar_cannot_place_is_a_failed_call_n
         add_cookies_to_profile(&[cookie("ct", "fresh", "127.0.0.1")], &profile_dir()).await.unwrap();
         save_session("t2wrap", &session(vec![], &[])).unwrap();
         let r = call("t2wrap", "items", args(json!({})), o2()).await;
-        assert_eq!(r.ok, false, "{}", j(&r));
+        assert!(!r.ok, "{}", j(&r));
         assert!(reason(&r).contains("JSON pointer"), "{r:?}");
     });
 }
@@ -2214,7 +2432,7 @@ fn auth_at_tier_2_for_a_read_with_a_session_ref_one_trigger_run_refreshes_the_va
         );
         let o = opts(None, Some(5000));
         let r = call("t2token", "items", args(json!({})), o.clone()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(3));
         assert!(matches(r"^tier 2 said auth .*refreshed the session", reason(&r)), "{r:?}");
         assert_eq!(call("t2token", "items", args(json!({})), o).await.tier, Some(2), "the refreshed value serves tier 2");
@@ -2228,7 +2446,7 @@ fn auth_with_no_login_on_record_gets_one_attempt_from_a_real_page_before_giving_
         let o = opts(None, Some(5000));
         fx.clear_hits();
         let r = call("picky", "items", args(json!({})), o.clone()).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(2));
         assert_eq!(r.data, Some(json!([{"picky": "ok"}])));
         assert!(reason(&r).contains("tier 1 said auth with no login on record"), "{r:?}");
@@ -2250,7 +2468,7 @@ fn when_the_page_says_auth_too_the_call_ends_exactly_as_it_would_have_tier_1s_au
         assert_eq!(r.class, Class::Auth, "{}", j(&r));
         assert_eq!(r.tier, Some(1));
         assert!(next(&r).contains("api-anything login walled"), "{r:?}");
-        let from_page = fx.hits().iter().filter(|h| h.url == "/api/me" && h.from_chrome()).count();
+        let from_page = fx.hits().iter().filter(|h| h.url == "/api/me" && h.chrome_ua()).count();
         assert_eq!(from_page, 1, "one attempt from a page, and no trigger run");
     });
 }
@@ -2260,14 +2478,23 @@ fn a_write_is_never_given_the_page_attempt_it_ends_as_tier_1s_auth_and_no_page_s
     chrome_test(|fx| async move {
         // 401 is an answer a write may be retried after, so only the read-only rule keeps this one from the page
         let url = format!("{}/api/picky?status=401", fx.base);
-        save(&fx, "pickywrite", vec![rd(&fx, "save", "/api/picky", json!({"readOnly": false, "request": {"method": "POST", "url": url, "headers": {}, "body": "x=1"}}))]);
+        save(
+            &fx,
+            "pickywrite",
+            vec![rd(
+                &fx,
+                "save",
+                "/api/picky",
+                json!({"readOnly": false, "request": {"method": "POST", "url": url, "headers": {}, "body": "x=1"}}),
+            )],
+        );
         fx.clear_hits();
         let r = call("pickywrite", "save", args(json!({})), writes(opts(None, Some(5000)))).await;
         assert_eq!(r.class, Class::Auth, "{}", j(&r));
         assert_eq!(r.tier, Some(1));
         // recovery may send it once more after a 401, with the profile's cookies: that is plain HTTP too
         assert!(fx.hits().iter().filter(|h| h.method == "POST").count() <= 2);
-        assert_eq!(fx.hits().iter().filter(|h| h.from_chrome()).count(), 0, "no page was opened");
+        assert_eq!(fx.hits().iter().filter(|h| h.chrome_ua()).count(), 0, "no page was opened");
     });
 }
 
@@ -2275,13 +2502,22 @@ fn a_write_is_never_given_the_page_attempt_it_ends_as_tier_1s_auth_and_no_page_s
 fn a_login_that_recovery_finds_counts_with_one_in_the_jar_by_then_auth_is_the_answer_and_no_page_is_opened() {
     chrome_test(|fx| async move {
         // nothing on record at the start; the Chrome profile holds a login cookie the wall does not care about
-        save(&fx, "pickyin", vec![rd(&fx, "items", "/api/picky", json!({"request": {"method": "GET", "url": format!("{}/api/picky", fx.base), "headers": {}}}))]);
+        save(
+            &fx,
+            "pickyin",
+            vec![rd(
+                &fx,
+                "items",
+                "/api/picky",
+                json!({"request": {"method": "GET", "url": format!("{}/api/picky", fx.base), "headers": {}}}),
+            )],
+        );
         add_cookies_to_profile(&[cookie("sessionid", "signed-in-elsewhere", "127.0.0.1")], &profile_dir()).await.unwrap();
         fx.clear_hits();
         let r = call("pickyin", "items", args(json!({})), opts(None, Some(5000))).await;
         assert_eq!(r.class, Class::Auth, "{}", j(&r));
         assert_eq!(r.tier, Some(1));
-        assert_eq!(fx.hits().iter().filter(|h| h.from_chrome()).count(), 0, "no page was opened");
+        assert_eq!(fx.hits().iter().filter(|h| h.chrome_ua()).count(), 0, "no page was opened");
     });
 }
 
@@ -2295,10 +2531,10 @@ fn recovery_comes_before_the_page_attempt_a_fresher_cookie_in_the_chrome_profile
         save_session("legacy", &session(vec![], &[])).unwrap();
         fx.clear_hits();
         let r = call("legacy", "me", args(json!({})), opts(None, Some(5000))).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.tier, Some(1));
         assert_eq!(r.data, Some(json!([{"me": "profile-only"}])));
-        let from_page = fx.hits().iter().filter(|h| h.url == "/api/me" && h.from_chrome()).count();
+        let from_page = fx.hits().iter().filter(|h| h.url == "/api/me" && h.chrome_ua()).count();
         assert_eq!(from_page, 0, "the jar was refreshed from the profile and plain HTTP answered");
     });
 }
@@ -2309,7 +2545,7 @@ fn tier_2_honours_timeout_ms() {
         save(&fx, "t2slow", vec![rd(&fx, "n", "/never", json!({"minTier": 2})), rd(&fx, "up", "/plain", json!({"minTier": 2}))]);
         // timeoutMs bounds the wait for the site's answer, not Chrome's first start in this process
         // (many seconds on a busy machine): have the browser up on the origin before the clock starts.
-        assert_eq!(call("t2slow", "up", args(json!({})), opts(Some(2), None)).await.ok, true);
+        assert!(call("t2slow", "up", args(json!({})), opts(Some(2), None)).await.ok);
         let t0 = Instant::now();
         let r = tokio::time::timeout(Duration::from_millis(15_000), call("t2slow", "n", args(json!({})), opts(Some(2), Some(1000)))).await;
         assert!(r.is_ok(), "no answer after {} ms with timeoutMs 1000", t0.elapsed().as_millis());
@@ -2332,13 +2568,16 @@ fn tier_2s_timeout_ms_is_one_deadline_once_chrome_is_up_opening_the_sites_page_a
         });
         let (base, task) = serve("127.0.0.1", "127.0.0.1", slow).await;
         save(&fx, "t2up", vec![rd(&fx, "up", "/plain", json!({"minTier": 2}))]);
-        assert_eq!(call("t2up", "up", args(json!({})), opts(Some(2), None)).await.ok, true, "Chrome is up");
+        assert!(call("t2up", "up", args(json!({})), opts(Some(2), None)).await.ok, "Chrome is up");
         let request = json!({"method": "GET", "url": format!("{base}/api"), "headers": {}});
-        save_site(&site(json!({"name": "t2late", "baseUrl": base, "operations": [rd(&fx, "n", "/api", json!({"minTier": 2, "request": request}))]}))).unwrap();
+        save_site(&site(
+            json!({"name": "t2late", "baseUrl": base, "operations": [rd(&fx, "n", "/api", json!({"minTier": 2, "request": request}))]}),
+        ))
+        .unwrap();
         let t0 = Instant::now();
         let r = call("t2late", "n", args(json!({})), opts(Some(2), Some(3000))).await;
         let ms = t0.elapsed().as_millis();
-        assert_eq!(r.ok, false, "{}", j(&r));
+        assert!(!r.ok, "{}", j(&r));
         assert!(reason(&r).contains("no response within 3000 ms"), "{r:?}");
         assert!(ms < 4500, "{ms} ms with timeoutMs 3000: the page's 2.5 s were not counted");
         task.abort();
@@ -2362,9 +2601,25 @@ fn a_second_process_cli_next_to_a_running_mcp_server_can_still_use_tier_2() {
             .unwrap();
         let mut stdin = holder.stdin.take().unwrap();
         let mut lines = tokio::io::BufReader::new(holder.stdout.take().unwrap()).lines();
-        let ask = |id: u64, method: &str, params: Value| format!("{}\n", json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
-        stdin.write_all(ask(1, "initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "probe", "version": "0"}})).as_bytes()).await.unwrap();
-        stdin.write_all(ask(2, "tools/call", json!({"name": "call_operation", "arguments": {"site": "two", "op": "l", "args": {}}})).as_bytes()).await.unwrap();
+        let ask =
+            |id: u64, method: &str, params: Value| format!("{}\n", json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        stdin
+            .write_all(
+                ask(
+                    1,
+                    "initialize",
+                    json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "probe", "version": "0"}}),
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        stdin
+            .write_all(
+                ask(2, "tools/call", json!({"name": "call_operation", "arguments": {"site": "two", "op": "l", "args": {}}})).as_bytes(),
+            )
+            .await
+            .unwrap();
         stdin.flush().await.unwrap();
         let answered = loop {
             let Ok(Some(line)) = lines.next_line().await else { panic!("holder exited") };
@@ -2375,7 +2630,7 @@ fn a_second_process_cli_next_to_a_running_mcp_server_can_still_use_tier_2() {
         };
         assert!(answered.contains("\"ok\":true"), "HOLDER {answered}");
         let r = call("two", "l", args(json!({})), opts(None, None)).await;
-        assert_eq!(r.ok, true, "{}: {} (reason {} chars)", r.class, reason(&r).chars().take(200).collect::<String>(), reason(&r).len());
+        assert!(r.ok, "{}: {} (reason {} chars)", r.class, reason(&r).chars().take(200).collect::<String>(), reason(&r).len());
         let _ = holder.kill().await;
     });
 }
@@ -2464,7 +2719,7 @@ fn a_search_with_no_results_returns_ok_with_empty_list_and_replays_nothing() {
         r2_site("empty", json!({}));
         let f = fetcher(|_| Ok(mem_json(json!({"results": []}), 200)));
         let r = call("empty", "o", args(json!({"q": "zzqxnonexistent"})), r2_t1(&f)).await;
-        assert_eq!(r.ok, true, "{}", j(&r));
+        assert!(r.ok, "{}", j(&r));
         assert_eq!(r.data, Some(json!([])));
         assert_eq!(r2_hits(&f).len(), 1, "no example replay");
     });
@@ -2526,18 +2781,30 @@ fn a_cross_origin_307_is_not_followed_when_the_body_carries_a_session_value() {
         );
         save_session("redir", &session(vec![], &[("fb_dtsg", "SECRET_DTSG_VALUE")])).unwrap();
         let f = fetcher(|req| {
-            Ok(if req.url.starts_with("https://c.test/") { mem_response(307, &[("location", "https://other.test/collect")], "") } else { mem_json(json!({"ok": 1}), 200) })
+            Ok(if req.url.starts_with("https://c.test/") {
+                mem_response(307, &[("location", "https://other.test/collect")], "")
+            } else {
+                mem_json(json!({"ok": 1}), 200)
+            })
         });
         let r = call("redir", "o", args(json!({"q": "x"})), writes(r2_t1(&f))).await;
-        assert_eq!(r.ok, false, "{}", j(&r));
+        assert!(!r.ok, "{}", j(&r));
         assert!(matches(r"not following the HTTP 307 redirect to https://other\.test", reason(&r)), "{r:?}");
-        assert_eq!(r2_hits(&f).into_iter().filter(|h| h.contains("other.test")).collect::<Vec<_>>(), Vec::<String>::new(), "the other origin got nothing");
+        assert_eq!(
+            r2_hits(&f).into_iter().filter(|h| h.contains("other.test")).collect::<Vec<_>>(),
+            Vec::<String>::new(),
+            "the other origin got nothing"
+        );
         // same origin, or no session value aboard: followed as before
         r2_site("redir2", json!({"request": {"method": "GET", "url": "https://c.test/api/search?q=alice", "headers": {}}}));
         let f = fetcher(|req| {
-            Ok(if req.url.starts_with("https://c.test/") { mem_response(307, &[("location", "https://other.test/api")], "") } else { mem_json(json!({"results": [{"id": 1}]}), 200) })
+            Ok(if req.url.starts_with("https://c.test/") {
+                mem_response(307, &[("location", "https://other.test/api")], "")
+            } else {
+                mem_json(json!({"results": [{"id": 1}]}), 200)
+            })
         });
         let ok = call("redir2", "o", args(json!({"q": "x"})), r2_t1(&f)).await;
-        assert_eq!(ok.ok, true, "{}", j(&ok));
+        assert!(ok.ok, "{}", j(&ok));
     });
 }

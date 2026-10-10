@@ -67,7 +67,9 @@ fn ex_full(kind: &str, req: Value, body: &str, content_type: &str, res_headers: 
     for (k, v) in req.as_object().unwrap() {
         request[k] = v.clone();
     }
-    common::ex(json!({ "id": id, "resourceType": kind, "request": request, "response": { "status": 200, "headers": res_headers, "contentType": content_type, "body": body } }))
+    common::ex(
+        json!({ "id": id, "resourceType": kind, "request": request, "response": { "status": 200, "headers": res_headers, "contentType": content_type, "body": body } }),
+    )
 }
 
 fn ex(kind: &str, req: Value, body: &str, content_type: &str) -> Exchange {
@@ -83,7 +85,13 @@ fn exd(kind: &str, req: Value) -> Exchange {
 }
 
 fn learn_with(exchanges: Vec<Exchange>, examples: Vec<Value>, extra: impl FnOnce(&mut LearnInput)) -> anyhow::Result<Learned> {
-    let mut input = LearnInput::new(exchanges, examples.into_iter().map(args).collect(), "op", Trigger { url: "https://site.test/".into(), steps: None, soft_from: None }, true);
+    let mut input = LearnInput::new(
+        exchanges,
+        examples.into_iter().map(args).collect(),
+        "op",
+        Trigger { url: "https://site.test/".into(), steps: None, soft_from: None },
+        true,
+    );
     extra(&mut input);
     learn_operation(&input)
 }
@@ -120,7 +128,11 @@ fn resp(status: u16, headers: &[(&str, &str)], body: &str) -> Resp {
 }
 
 fn html(body: &str) -> Resp {
-    resp(200, &[("content-type", "text/html; charset=utf-8")], &format!("<!doctype html><html><head><title>t</title></head><body>{body}</body></html>"))
+    resp(
+        200,
+        &[("content-type", "text/html; charset=utf-8")],
+        &format!("<!doctype html><html><head><title>t</title></head><body>{body}</body></html>"),
+    )
 }
 
 type Handler = Arc<dyn Fn(Req) -> BoxFuture<'static, Resp> + Send + Sync>;
@@ -150,10 +162,13 @@ async fn listen(h: Handler, host: &str) -> Served {
         async move {
             let method = req.method().to_string();
             let uri = req.uri().clone();
-            let headers: HashMap<String, String> = req.headers().iter().map(|(k, v)| (k.as_str().to_lowercase(), v.to_str().unwrap_or("").to_string())).collect();
+            let headers: HashMap<String, String> =
+                req.headers().iter().map(|(k, v)| (k.as_str().to_lowercase(), v.to_str().unwrap_or("").to_string())).collect();
             let body = axum::body::to_bytes(req.into_body(), 16 * 1024 * 1024).await.unwrap_or_default();
-            let query: HashMap<String, String> = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
-            let r = h(Req { method, path: uri.path().to_string(), query, headers, body: String::from_utf8_lossy(&body).into_owned() }).await;
+            let query: HashMap<String, String> =
+                url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+            let r =
+                h(Req { method, path: uri.path().to_string(), query, headers, body: String::from_utf8_lossy(&body).into_owned() }).await;
             let mut b = Response::builder().status(r.status);
             for (k, v) in &r.headers {
                 b = b.header(k.as_str(), v.as_str());
@@ -239,7 +254,12 @@ mod a_beacon_that_echoes_the_spas_push_state_location_is_not_learned {
         let b = beacon(r#"{"id":"evt_0192837465"}"#);
         // control: with only the document and the Referer, the echo goes unseen
         assert_eq!(learn(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })]).unwrap().exchange.id, b.id);
-        let err = learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| i.pages = Some(vec!["https://site.test/search?q=notion".into()])).err().expect("throws").to_string();
+        let err = learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| {
+            i.pages = Some(vec!["https://site.test/search?q=notion".into()])
+        })
+        .err()
+        .expect("throws")
+        .to_string();
         assert!(re("no captured request carries the example values").is_match(&err), "{err}");
     }
 
@@ -248,7 +268,10 @@ mod a_beacon_that_echoes_the_spas_push_state_location_is_not_learned {
         let b = beacon(r#"{"success":true}"#);
         let err = learn(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })]).err().expect("throws").to_string();
         assert!(re("answers without data .*--pick-request.*--html or --embedded").is_match(&err), "{err}");
-        assert_eq!(learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| i.id = Some(b.id)).unwrap().exchange.id, b.id);
+        assert_eq!(
+            learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| i.id = Some(b.id)).unwrap().exchange.id,
+            b.id
+        );
         // an answer carrying the example is data, however small
         let small = exj("fetch", json!({ "url": "https://site.test/api/user?name=alice" }), r#"{"user":{"name":"alice"}}"#);
         assert_eq!(learn(vec![small.clone()], vec![json!({ "name": "alice" })]).unwrap().exchange.id, small.id);
@@ -266,7 +289,8 @@ mod a_token_an_earlier_response_issued_is_a_session_ref_whatever_its_name {
     }
 
     fn check(req: Value) {
-        let Learned { operation: op, session_values, .. } = learn(vec![boot(), exd("fetch", req)], vec![json!({ "q": "kittens" })]).unwrap();
+        let Learned { operation: op, session_values, .. } =
+            learn(vec![boot(), exd("fetch", req)], vec![json!({ "q": "kittens" })]).unwrap();
         assert!(!serde_json::to_string(&op).unwrap().contains(TOK), "the token is literal in the spec");
         let r = op.slots.iter().find(|s| s.is_ref()).unwrap();
         assert!(re("^session:op/").is_match(r.ref_str()), "{}", r.ref_str());
@@ -290,7 +314,12 @@ mod a_token_an_earlier_response_issued_is_a_session_ref_whatever_its_name {
     fn a_later_response_does_not_count_and_a_persisted_query_hash_stays_a_volatile_anchor() {
         let hash = "e0f2a1b3c4d5e6f708192a3b4c5d6e7f";
         let req = exd("fetch", json!({ "url": format!("https://api.site.test/v1/search?q=kittens&hash={hash}") }));
-        let op = learn(vec![exj("fetch", json!({ "url": "https://site.test/api/meta" }), &json!({ "hash": hash }).to_string()), req], vec![json!({ "q": "kittens" })]).unwrap().operation;
+        let op = learn(
+            vec![exj("fetch", json!({ "url": "https://site.test/api/meta" }), &json!({ "hash": hash }).to_string()), req],
+            vec![json!({ "q": "kittens" })],
+        )
+        .unwrap()
+        .operation;
         assert_eq!(op.slots.iter().filter(|s| s.is_ref()).count(), 0);
         assert_eq!(op.volatile.len(), 1);
         let later = learn(
@@ -308,7 +337,12 @@ mod a_token_an_earlier_response_issued_is_a_session_ref_whatever_its_name {
     fn a_key_in_a_per_user_script_sent_with_the_session_cookie_is_not_public_one_in_a_static_bundle_is() {
         let key = "Uk7pQ2mZ9xVb4NcR8sLd3Tg6";
         let api = || exd("fetch", json!({ "url": "https://api.site.test/v1/search?q=kittens", "headers": { "x-api-key": key } }));
-        let per_user = ex("script", json!({ "url": "https://site.test/api/me/config.js", "headers": { "cookie": "sess=abc" } }), &format!("window.__CFG__={{user:\"alice\",apiKey:\"{key}\"}};"), "application/javascript");
+        let per_user = ex(
+            "script",
+            json!({ "url": "https://site.test/api/me/config.js", "headers": { "cookie": "sess=abc" } }),
+            &format!("window.__CFG__={{user:\"alice\",apiKey:\"{key}\"}};"),
+            "application/javascript",
+        );
         let op = learn(vec![per_user, api()], vec![json!({ "q": "kittens" })]).unwrap().operation;
         assert_eq!(op.public, None);
         assert!(!serde_json::to_string(&op).unwrap().contains(key));
@@ -327,7 +361,12 @@ mod a_token_an_earlier_response_issued_is_a_session_ref_whatever_its_name {
     #[test]
     fn bearer_and_pwd_name_credentials() {
         for q in [format!("bearer={TOK}"), format!("pwd={TOK}")] {
-            let op = learn(vec![exd("fetch", json!({ "url": format!("https://api.site.test/v1/search?q=kittens&{q}") }))], vec![json!({ "q": "kittens" })]).unwrap().operation;
+            let op = learn(
+                vec![exd("fetch", json!({ "url": format!("https://api.site.test/v1/search?q=kittens&{q}") }))],
+                vec![json!({ "q": "kittens" })],
+            )
+            .unwrap()
+            .operation;
             assert!(!serde_json::to_string(&op).unwrap().contains(TOK), "{q}");
         }
     }
@@ -337,7 +376,7 @@ mod a_token_an_earlier_response_issued_is_a_session_ref_whatever_its_name {
 
 #[test]
 fn a_route_resolver_whose_only_arg_is_the_page_path_learns_when_picked_by_id() {
-    let exs = || {
+    let exs = {
         vec![
             ex("document", json!({ "url": "https://site.test/facebook/react" }), "<html><div id=app></div></html>", "text/html"),
             exj(
@@ -354,16 +393,19 @@ fn a_route_resolver_whose_only_arg_is_the_page_path_learns_when_picked_by_id() {
     };
     let trigger = Trigger { url: "https://site.test/{repo}".into(), steps: None, soft_from: None };
     let t = trigger.clone();
-    let err = learn_with(exs(), vec![json!({ "repo": "facebook/react" })], |i| i.trigger = t).err().expect("throws").to_string();
+    let err = learn_with(exs.clone(), vec![json!({ "repo": "facebook/react" })], |i| i.trigger = t).err().expect("throws").to_string();
     assert!(re("no captured request carries").is_match(&err), "{err}");
-    let picked = exs()[1].id;
-    let op = learn_with(exs(), vec![json!({ "repo": "facebook/react" })], |i| {
+    let picked = exs[1].id;
+    let op = learn_with(exs, vec![json!({ "repo": "facebook/react" })], |i| {
         i.trigger = trigger;
         i.id = Some(picked);
     })
     .unwrap()
     .operation;
-    let body: Value = serde_json::from_str(build_request(&op, &args(json!({ "repo": "vercel/next.js" })), &no_session()).unwrap().body.as_deref().unwrap()).unwrap();
+    let body: Value = serde_json::from_str(
+        build_request(&op, &args(json!({ "repo": "vercel/next.js" })), &no_session()).unwrap().body.as_deref().unwrap(),
+    )
+    .unwrap();
     assert_eq!(body, json!({ "path": "/vercel/next.js", "locale": "en" }));
 }
 
@@ -379,7 +421,13 @@ fn a_param_template_finds_a_percent_encoded_cookie_in_a_leaf_with_no_escape_of_i
         json!({ "url": "http://127.0.0.1/api/data", "headers": { "cookie": format!("tok={token}"), "x-ctx": format!("user=alice;auth={}", enc(token)) } }),
         r#"{"data":{"name":"alice"}}"#,
     );
-    let mut input = LearnInput::new(vec![e], vec![args(json!({ "name": "alice" }))], "op", Trigger { url: "http://127.0.0.1/p?name={name}".into(), steps: None, soft_from: None }, true);
+    let mut input = LearnInput::new(
+        vec![e],
+        vec![args(json!({ "name": "alice" }))],
+        "op",
+        Trigger { url: "http://127.0.0.1/p?name={name}".into(), steps: None, soft_from: None },
+        true,
+    );
     input.cookies = cookies.clone();
     let op = learn_operation(&input).unwrap().operation;
     assert!(!serde_json::to_string(&op).unwrap().contains(&enc(token)), "the encoded cookie is literal in the spec");
@@ -423,7 +471,12 @@ fn export_flags_an_ip_inside_a_longer_leaf_not_a_version_string() {
         assert_eq!(warn("c", &json!({ "ctx": "ip=73.162.10.4&geo=US" }).to_string(), json!({})).len(), 1);
         assert_eq!(warn("d", &json!({ "remoteHost": "73.162.10.4" }).to_string(), json!({})).len(), 1);
         assert_eq!(
-            warn("e", &json!({ "ua": "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36", "v": "v1.2.3.4", "at": "2026-09-27T12:30:45.123Z" }).to_string(), json!({})),
+            warn(
+                "e",
+                &json!({ "ua": "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36", "v": "v1.2.3.4", "at": "2026-09-27T12:30:45.123Z" })
+                    .to_string(),
+                json!({})
+            ),
             Vec::<String>::new()
         );
     })
@@ -465,7 +518,11 @@ mod html_recipes {
     fn a_page_titled_like_a_robot_check_is_not_a_wall_when_the_recipe_finds_its_items() {
         let r = classify(&op("li.r"), &page_titled(&"<li class=r>x</li>".repeat(50), "Robot check-in: how our warehouse robots work"));
         assert_eq!(j(&r.class), json!("ok"), "{}", r.reason);
-        assert_eq!(j(&classify(&op("li.r"), &page_titled("<p>solve this</p>", "Robot check")).class), json!("blocked"), "without the data the title still counts");
+        assert_eq!(
+            j(&classify(&op("li.r"), &page_titled("<p>solve this</p>", "Robot check")).class),
+            json!("blocked"),
+            "without the data the title still counts"
+        );
     }
 
     #[test]
@@ -475,7 +532,10 @@ mod html_recipes {
         assert_eq!(j(&renamed.class), json!("drift"), "items under another class are a renamed selector");
         assert!(renamed.missing);
         assert!(classify(&op("li.r"), &page("<ul></ul>")).missing, "no container in the selector: the example replay decides");
-        assert!(classify(&op("#search > .item"), &page("<div id=search><p>No results</p></div>")).missing, "no tag: any element in the container is not emptiness");
+        assert!(
+            classify(&op("#search > .item"), &page("<div id=search><p>No results</p></div>")).missing,
+            "no tag: any element in the container is not emptiness"
+        );
         assert_eq!(j(&classify(&op("#search > .item"), &page("<div id=search></div>")).class), json!("ok"));
     }
 
@@ -490,13 +550,23 @@ mod html_recipes {
             let fetcher = Answering::new(|u| {
                 let q = query_of(&u.url, "q").unwrap_or_default();
                 response(
-                    &if q == "zzqx" { "<html><body><ul class=results></ul></body></html>".to_string() } else { format!("<html><body><ul class=results><li class=r>{q}</li></ul></body></html>") },
+                    &if q == "zzqx" {
+                        "<html><body><ul class=results></ul></body></html>".to_string()
+                    } else {
+                        format!("<html><body><ul class=results><li class=r>{q}</li></ul></body></html>")
+                    },
                     200,
                     "text/html",
                     &u.url,
                 )
             });
-            let r = call("z", "op", args(json!({ "q": "zzqx" })), CallOptions { fetcher: Some(fetcher.clone()), max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() }).await;
+            let r = call(
+                "z",
+                "op",
+                args(json!({ "q": "zzqx" })),
+                CallOptions { fetcher: Some(fetcher.clone()), max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() },
+            )
+            .await;
             assert!(r.ok, "{}", serde_json::to_string(&r).unwrap());
             assert_eq!(r.data, Some(json!([])));
             assert_eq!(fetcher.count(), 1);
@@ -544,9 +614,19 @@ mod input_answers {
             let _home = new_home();
             save_site(&base()).unwrap();
             let fetcher = Answering::new(|u| json_res(json!({ "profile": {} }), 200, &u.url));
-            let r = call("p", "op", args(json!({ "id": "bob", "date": "Oct 21" })), CallOptions { fetcher: Some(fetcher.clone()), max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() }).await;
+            let r = call(
+                "p",
+                "op",
+                args(json!({ "id": "bob", "date": "Oct 21" })),
+                CallOptions { fetcher: Some(fetcher.clone()), max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() },
+            )
+            .await;
             assert_eq!(j(&r.class), json!("input"), "{}", serde_json::to_string(&r).unwrap());
-            assert!(re(r#"param "date" must be a date as YYYY-MM-DD, got "Oct 21""#).is_match(r.reason.as_deref().unwrap_or("")), "{:?}", r.reason);
+            assert!(
+                re(r#"param "date" must be a date as YYYY-MM-DD, got "Oct 21""#).is_match(r.reason.as_deref().unwrap_or("")),
+                "{:?}",
+                r.reason
+            );
             assert_eq!(fetcher.count(), 0);
             let mut bad = base_json();
             bad["operations"][0]["params"] = json!([{ "name": "id", "pattern": "([" }]);
@@ -568,7 +648,13 @@ mod input_answers {
                     json_res(json!({ "message": "This profile can't be accessed", "status": 403 }), 403, &u.url)
                 }
             });
-            let r = call("p", "op", args(json!({ "id": "zzqx-no-such-person", "date": "2027-04-15" })), CallOptions { fetcher: Some(fetcher.clone()), min_interval_ms: Some(0), ..Default::default() }).await;
+            let r = call(
+                "p",
+                "op",
+                args(json!({ "id": "zzqx-no-such-person", "date": "2027-04-15" })),
+                CallOptions { fetcher: Some(fetcher.clone()), min_interval_ms: Some(0), ..Default::default() },
+            )
+            .await;
             assert_eq!(j(&r.class), json!("input"), "{}", serde_json::to_string(&r).unwrap());
             assert_eq!(r.tier, Some(1));
             assert_eq!(fetcher.count(), 2);
@@ -584,14 +670,19 @@ mod agent_surface {
 
     #[test]
     fn mcp_next_hints_name_mcp_tools_and_cli_only_commands_say_so() {
-        assert_eq!(mcp_next("check the args against: api-anything ops linkedin; do not heal or re-add"), "check the args against: list_operations {\"site\":\"linkedin\"}; do not heal or re-add");
+        assert_eq!(
+            mcp_next("check the args against: api-anything ops linkedin; do not heal or re-add"),
+            "check the args against: list_operations {\"site\":\"linkedin\"}; do not heal or re-add"
+        );
         assert!(re(r#"^the login tool \{"site":"x"\}"#).is_match(&mcp_next("ask the user to run: api-anything login x; then retry once")));
         assert!(
             re(r"is a CLI: run it in your shell, as npx -y github:goodnight000/api-anything when the command is not installed; with no shell, ask the user\)$")
                 .is_match(&mcp_next("api-anything heal x getUser; if that fails, re-learn it with api-anything add x getUser ..."))
         );
         assert_eq!(mcp_next("api-anything sites lists what exists"), "list_sites lists what exists");
-        assert!(!re("rerun").is_match(&mcp_next("only if the user asked for this write: rerun with --allow-writes (MCP: start the server with --allow-writes)")));
+        assert!(!re("rerun").is_match(&mcp_next(
+            "only if the user asked for this write: rerun with --allow-writes (MCP: start the server with --allow-writes)"
+        )));
     }
 
     #[test]
@@ -620,7 +711,8 @@ mod agent_surface {
             let ops = server.call_tool("list_operations", &args(json!({ "site": "notes" }))).await.value;
             assert!(re("Airport codes only").is_match(ops["notes"].as_str().unwrap_or("")), "{ops}");
             assert_eq!(ops["operations"][0]["params"][0]["hint"], json!("a date as YYYY-MM-DD"));
-            let bad = server.call_tool("call_operation", &args(json!({ "site": "notes", "op": "get", "args": { "d": "tomorrow" } }))).await.value;
+            let bad =
+                server.call_tool("call_operation", &args(json!({ "site": "notes", "op": "get", "args": { "d": "tomorrow" } }))).await.value;
             assert_eq!(bad["class"], json!("input"));
             assert_eq!(bad["next"], json!("check the args against: list_operations {\"site\":\"notes\"}"));
             assert_eq!(load_site("notes").unwrap().unwrap().site.name, "notes");
@@ -895,8 +987,10 @@ mod browser {
                 retry_on_navigation: retry,
                 redirect: None,
             };
+            // Playwright words this "Execution context was destroyed"; over CDP the evaluation fails with
+            // "Inspected target navigated or closed". Either way the read's answer is the navigation, not a retry.
             let err = page_fetch(fetch(base.clone(), false)).await.err().expect("rejects").to_string();
-            assert!(re("Execution context was destroyed").is_match(&err), "{err}");
+            assert!(re("Execution context was destroyed|Inspected target navigated").is_match(&err), "{err}");
             let r = page_fetch(fetch(other, true)).await.unwrap();
             assert_eq!(r.status, 200);
             assert_eq!(r.body, r#"{"ok":1}"#);
