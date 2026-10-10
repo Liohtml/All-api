@@ -308,6 +308,7 @@ pub fn js_pattern(p: &str) -> String {
 }
 
 /// Compile a user-supplied, JavaScript-style pattern.
+#[allow(clippy::result_large_err)]
 pub fn js_regex(p: &str) -> Result<fancy_regex::Regex, fancy_regex::Error> {
     fancy_regex::Regex::new(&js_pattern(p))
 }

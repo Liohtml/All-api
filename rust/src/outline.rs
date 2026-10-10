@@ -321,7 +321,7 @@ fn words(raw: &str) -> Vec<String> {
 fn name_for(el: &ElementRef, used: &mut HashSet<String>, at: Option<&str>) -> String {
     let raw = stable_testid(attr(el, "data-testid"))
         .map(|s| s.to_string())
-        .or_else(|| classes(el).into_iter().filter(|c| stable_class(c)).last())
+        .or_else(|| classes(el).into_iter().rfind(|c| stable_class(c)))
         .unwrap_or_else(|| tag(el));
     // the last two words name it: "book-item-ratings-count" -> ratingsCount, "BookStats__rating" -> bookStatsRating
     let ws = words(&raw);

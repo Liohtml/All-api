@@ -53,7 +53,6 @@ impl Cdp {
         let s2 = shared.clone();
         tokio::spawn(async move {
             while let Some(text) = rx.recv().await {
-                if std::env::var_os("API_ANYTHING_CDP_TRACE").is_some() { eprintln!("<- {}", text.chars().take(400).collect::<String>()); } // TEMP TRACE
                 let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
                 if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
                     let waiter = s2.pending.lock().unwrap().remove(&id);
@@ -107,7 +106,6 @@ impl Cdp {
         if let Some(s) = session {
             msg["sessionId"] = json!(s);
         }
-        if std::env::var_os("API_ANYTHING_CDP_TRACE").is_some() { eprintln!("-> {}", msg.to_string().chars().take(400).collect::<String>()); } // TEMP TRACE
         if self.tx.send(msg.to_string()).is_err() {
             self.shared.pending.lock().unwrap().remove(&id);
             bail!("the browser connection closed");
@@ -279,6 +277,20 @@ async fn stderr_until<F: Fn(&str) -> bool>(child: &mut Child, until: F) -> Resul
     }
 }
 
+/// The same descriptor, moved to 5 or above (still close-on-exec).
+#[cfg(unix)]
+unsafe fn above_four(fd: i32) -> Result<i32> {
+    if fd > 4 {
+        return Ok(fd);
+    }
+    let moved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 5) };
+    if moved < 0 {
+        bail!("could not set up the DevTools pipes: {}", std::io::Error::last_os_error());
+    }
+    unsafe { libc::close(fd) };
+    Ok(moved)
+}
+
 #[cfg(unix)]
 async fn launch_once(bin: &Path, profile_dir: &Path, headless: bool) -> Result<Launched> {
     use std::os::fd::FromRawFd;
@@ -293,6 +305,9 @@ async fn launch_once(bin: &Path, profile_dir: &Path, headless: bool) -> Result<L
     }
     let (child_read, parent_write) = (to_chrome[0], to_chrome[1]);
     let (parent_read, child_write) = (from_chrome[0], from_chrome[1]);
+    // The child's ends must not already sit on 3 or 4: dup2 onto itself keeps close-on-exec, and
+    // dup2(4, 3) would clobber the other end before it is moved.
+    let (child_read, child_write) = unsafe { (above_four(child_read)?, above_four(child_write)?) };
     let mut cmd = chrome_command(bin, profile_dir, headless);
     cmd.arg("--remote-debugging-pipe").arg("about:blank");
     unsafe {

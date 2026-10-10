@@ -45,12 +45,6 @@ pub struct Attempt {
     pub note: Option<String>,
 }
 
-impl Default for Class {
-    fn default() -> Self {
-        Class::Error
-    }
-}
-
 impl Attempt {
     pub fn new(tier: u8, class: Class, reason: &str) -> Attempt {
         Attempt { tier, class, reason: reason.to_string(), ..Default::default() }
@@ -274,7 +268,7 @@ pub fn login_wall(capture: &CaptureResult, trigger_url: &str) -> Option<String> 
     if f.path() == t.path() {
         return None;
     }
-    let doc = capture.exchanges.iter().filter(|e| e.resource_type == "document" && e.response.as_ref().map(|r| r.body.is_some()).unwrap_or(false)).last();
+    let doc = capture.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.as_ref().map(|r| r.body.is_some()).unwrap_or(false));
     static PASSWORD: LazyLock<regex::Regex> = LazyLock::new(|| re(r#"(?i)type=["']?password"#));
     static LOGIN: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)(log|sign)[-_]?in|/accounts/login|/i/flow/login"));
     let password = doc.map(|d| PASSWORD.is_match(d.body())).unwrap_or(false);
@@ -581,7 +575,7 @@ fn learn_or_explain(site: &str, run: &CaptureResult, input: &LearnInput) -> Resu
             // Only the page's own documents: an ad's or widget's iframe (a reCAPTCHA frame) is not the page.
             let docs: Vec<&Exchange> = run.exchanges.iter().filter(|x| x.resource_type == "document" && x.response.is_some()).collect();
             let own = docs.first().and_then(|d| parse_url(&d.request.url)).map(|u| site_of(u.host_str().unwrap_or("")));
-            let doc = docs.iter().filter(|x| parse_url(&x.request.url).map(|u| Some(site_of(u.host_str().unwrap_or(""))) == own).unwrap_or(false)).last();
+            let doc = docs.iter().rfind(|x| parse_url(&x.request.url).map(|u| Some(site_of(u.host_str().unwrap_or(""))) == own).unwrap_or(false));
             let wall = doc.and_then(|d| d.response.as_ref()).and_then(|r| bot_wall(&Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: None }, false, None));
             if let Some(wall) = wall {
                 bail!("the page served a bot challenge ({wall}): ask the user to run api-anything login {site} and clear it, then add again (learning said: {e})");
@@ -1127,6 +1121,7 @@ fn summarize(a: &Operation, b: &Operation) -> String {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum HealResult {
     Healed { strategy: Strategy, operation: Operation, attempt: Attempt },
     Identical { reason: String, fallback: Option<Attempt> },

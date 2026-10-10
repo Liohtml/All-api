@@ -423,7 +423,7 @@ fn page_says(c: &CaptureFile, ranked: &[Candidate], values: &[String]) -> PageSa
     let none = PageSays { stop: None, also: None, status: None };
     let pages: Vec<String> = capture_pages(&c.result).iter().map(|u| u.split('#').next().unwrap_or("").to_string()).collect();
     // the main frame's last document: a widget's iframe is a document too
-    let Some(page) = c.result.exchanges.iter().filter(|e| e.resource_type == "document" && e.response.is_some() && pages.contains(&e.request.url)).last() else { return none };
+    let Some(page) = c.result.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.is_some() && pages.contains(&e.request.url)) else { return none };
     let Some(res) = &page.response else { return none };
     let status = res.status;
     let body = res.body.clone().unwrap_or_default();
@@ -497,7 +497,7 @@ async fn cmd_capture(p: &Parsed) -> Result<i32> {
     let top = ranked.first();
     let html = top.map(|t| t.content_type.as_deref().unwrap_or("").to_lowercase().contains("html")).unwrap_or(false);
     // a bot wall is not fixed by picking another request or writing a recipe
-    let doc = c.result.exchanges.iter().filter(|e| e.resource_type == "document" && e.response.is_some()).last();
+    let doc = c.result.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.is_some());
     let top_ex = top.and_then(|t| c.result.exchanges.iter().find(|e| e.id == t.id));
     let wall = wall_of(doc).or_else(|| wall_of(top_ex));
     let page = if wall.is_some() { PageSays { stop: None, also: None, status: None } } else { page_says(&c, &ranked, &values) };

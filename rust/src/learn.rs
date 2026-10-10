@@ -397,6 +397,7 @@ fn try_parse(body: Option<&str>) -> Option<Value> {
     parse_body(b, None).ok()
 }
 
+#[derive(Default)]
 pub struct RankOptions<'a> {
     /// the caller already chose the pool (a match), so only preflights are dropped
     pub all: bool,
@@ -406,11 +407,6 @@ pub struct RankOptions<'a> {
     pub second: Option<Second<'a>>,
 }
 
-impl Default for RankOptions<'_> {
-    fn default() -> Self {
-        RankOptions { all: false, pages: None, second: None }
-    }
-}
 
 /// Noise-filtered requests, best first: carries the example values, succeeded, returned JSON.
 /// A data-less answer (a beacon's ack) ranks below every real answer.
@@ -466,7 +462,7 @@ pub fn rank_candidates(exchanges: &[Exchange], args: &Args, o: RankOptions) -> V
             }
         })
         .collect();
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|c| std::cmp::Reverse(c.score));
     out
 }
 

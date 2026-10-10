@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::LazyLock;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Class {
     Ok,
@@ -17,6 +17,7 @@ pub enum Class {
     Rate,
     Blocked,
     Input,
+    #[default]
     Error,
     /// a write without allowWrites: never from the classifier
     Refused,

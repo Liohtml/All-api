@@ -407,6 +407,7 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Resolved {
     Found(Site, Operation),
     Failed(CallResult),
