@@ -232,6 +232,8 @@ const OPTIONS: &[(&str, Kind)] = &[
 
 #[derive(Default, Debug)]
 pub struct Parsed {
+    /// every flag given, first occurrence first (what parseArgs reports an unknown one by)
+    order: Vec<String>,
     bools: Vec<String>,
     strs: IndexMap<String, String>,
     multis: IndexMap<String, Vec<String>>,
@@ -250,10 +252,12 @@ impl Parsed {
         self.multis.get(name)
     }
     fn given(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.bools.clone();
-        v.extend(self.strs.keys().cloned());
-        v.extend(self.multis.keys().cloned());
-        v
+        self.order.clone()
+    }
+    fn seen(&mut self, name: &str) {
+        if !self.order.iter().any(|o| o == name) {
+            self.order.push(name.to_string());
+        }
     }
 }
 
@@ -268,6 +272,7 @@ fn parse_args(argv: &[String]) -> Result<Parsed> {
             break;
         }
         if a == "-h" {
+            p.seen("help");
             p.bools.push("help".into());
             i += 1;
             continue;
@@ -282,6 +287,7 @@ fn parse_args(argv: &[String]) -> Result<Parsed> {
                     "Unknown option '--{name}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--{name}\""
                 ));
             };
+            p.seen(name);
             match kind {
                 Kind::Bool => {
                     if !p.bools.iter().any(|b| b == name) {
