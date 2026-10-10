@@ -54,3 +54,21 @@ reader of the TypeScript (or its tests) needs.
 `tests/*.rs` port `../test/*.test.ts` one to one. `tests/common/fixture.rs` is the offline site
 (`Fixture::start().await`), `tests/common/mod.rs` the fixture helpers. Browser tests use the
 Chrome named by `API_ANYTHING_CHROME` (falling back to the Playwright Chromium under `/opt/pw-browsers` when present) and skip without one.
+
+Each browser test file runs on one shared tokio runtime (the shared Chrome belongs to the runtime
+that launched it) and its tests take turns on one home directory, so `cargo test --test <file>`
+passes with the default parallel dispatch as well as with `--test-threads=1`. Tests whose TS
+version depends on file order carry a `t<n>_` prefix.
+
+Where a TS test checks something that only exists in Node or Playwright, the Rust test checks the
+behavior behind it instead; each such test says so in a comment:
+
+| TS test | Rust |
+|---|---|
+| `browser`: the headless user agent is asked of Chrome once, then read from `chrome-ua.json` | no probe and no cache over CDP (the override comes from the running Chrome's version); asserts the user agent is a Chrome one without `Headless`, as the server receives it |
+| `browser-surface`: a run leaves no timer behind | not ported: it counts Node's active `Timeout` handles |
+| `browser-surface`: Ctrl-C mid-capture exits 130 | the binary dies by SIGINT (no handler, as in Node); exit 130 or the signal, Chrome gone within 3 s |
+| `browser-surface`: Playwright fault injection (`tabs.sync`, a `goto`/`close` that never settles) | the observable outcome (a new tab's navigation stopped and recorded aborted; another run's page can still send once a run is over) |
+| `round3`: "Execution context was destroyed" | CDP's wording, "Inspected target navigated or closed", accepted too |
+| `live`: the WAF test relies on the tier-3 test running first | the precondition (the WAF cookie in the profile) is set in the test |
+| `execute-classify`, `e2e`: `test/fixture/cookie-db.ts` | `make_chromium_db` in the test file (rusqlite, AES-CBC v10) |
