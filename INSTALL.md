@@ -23,7 +23,7 @@ command (it works in sh, bash and zsh, and removes the clone whether or not it s
 (
   dir="$(mktemp -d)" || exit
   trap 'rm -rf "$dir"' 0
-  git clone -q --depth 1 https://github.com/goodnight000/api-anything.git "$dir" &&
+  git clone -q --depth 1 https://github.com/Liohtml/All-api.git "$dir" &&
     cd "$dir" &&
     npm ci --no-audit --no-fund &&
     archive="$(npm pack --silent)" &&
@@ -32,7 +32,7 @@ command (it works in sh, bash and zsh, and removes the clone whether or not it s
 ```
 
 A non-zero exit status means the clone, the build or the install failed: stop and show the user
-the output. Don't use `npm install -g github:goodnight000/api-anything`, because it fails under npm 11. If
+the output. Don't use `npm install -g github:Liohtml/All-api`, because it fails under npm 11. If
 the global install fails with a permission error (EACCES), don't use sudo. Tell the user and stop.
 
 ## 2b. Or install the Rust build
@@ -41,12 +41,7 @@ The Rust implementation in `rust/` gives the same command as one binary without 
 toolchain (`cargo --version`, 1.85 or newer):
 
 ```sh
-(
-  dir="$(mktemp -d)" || exit
-  trap 'rm -rf "$dir"' 0
-  git clone -q --depth 1 https://github.com/goodnight000/api-anything.git "$dir" &&
-    cargo install --path "$dir/rust" --locked
-)
+cargo install --git https://github.com/Liohtml/All-api api-anything
 ```
 
 Use either install, not both: they share `~/.api-anything`, and the first `api-anything` on the

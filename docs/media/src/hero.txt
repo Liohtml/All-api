@@ -1,0 +1,5 @@
+api-anything add hn-demo links --trigger 'https://news.ycombinator.com/from?site={domain}' --example domain=github.com --example2 domain=github.io --match path=/from --html '{"items":"tr.athing","fields":{"title":".titleline > a","url":".titleline > a@href"}}' | jq -C '{ok, request, params, preview}'
+api-anything call hn-demo links domain=arxiv.org | jq -C '{ok, tier, ms, stories: (.data | length), first: .data[0]}'
+api-anything call google-flights search origin=BER destination=LIS date=2026-11-10 | jq -C '.data[:3] | map({airline: .airline[0], price, minutes: .durationMinutes, via: (.via | join(","))})'
+api-anything call goodreads searchBooks q=piranesi | jq -C '.data[0]'
+api-anything call amazon search k=mechanical+keyboard | jq -C '{tier, ms, first: .data[0]}'

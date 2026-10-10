@@ -1,0 +1,3 @@
+api-anything call youtube search query=rust
+api-anything call hacker-news search
+api-anything call instagram getProfile username=nasa | jq -C '{ok, class, tier, reason, next, ms}'

@@ -1,0 +1,19 @@
+[
+{
+  "cmd": "api-anything call youtube search query=rust",
+  "out": "{\"ok\":false,\"class\":\"input\",\"reason\":\"unknown arg query; search takes q\",\"next\":\"check the args against: api-anything ops youtube\",\"ms\":1}\nnext: check the args against: api-anything ops youtube",
+  "ms": 7
+}
+,
+{
+  "cmd": "api-anything call hacker-news search",
+  "out": "{\"ok\":false,\"class\":\"input\",\"reason\":\"missing required param \\\"query\\\"\",\"next\":\"check the args against: api-anything ops hacker-news\",\"ms\":1}\nnext: check the args against: api-anything ops hacker-news",
+  "ms": 8
+}
+,
+{
+  "cmd": "api-anything call instagram getProfile username=nasa | jq -C '{ok, class, tier, reason, next, ms}'",
+  "out": "next: rate limited: do not retry now; wait a few minutes\n\u001b[1;39m{\n  \u001b[0m\u001b[34;1m\"ok\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39mfalse\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"class\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"rate\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"tier\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m1\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"reason\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"HTTP 429\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"next\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;32m\"rate limited: do not retry now; wait a few minutes\"\u001b[0m\u001b[1;39m,\n  \u001b[0m\u001b[34;1m\"ms\"\u001b[0m\u001b[1;39m: \u001b[0m\u001b[0;39m614\u001b[0m\u001b[1;39m\n\u001b[1;39m}\u001b[0m",
+  "ms": 624
+}
+]
