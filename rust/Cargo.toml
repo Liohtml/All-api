@@ -1,0 +1,58 @@
+[package]
+name = "api-anything"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Learn reusable operations from a website's browser traffic and call them from a CLI, library or MCP server."
+repository = "https://github.com/goodnight000/api-anything"
+publish = false
+
+[lib]
+name = "api_anything"
+path = "src/lib.rs"
+
+[[bin]]
+name = "api-anything"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+fancy-regex = "0.14"
+url = "2"
+percent-encoding = "2"
+base64 = "0.22"
+psl = "2"
+scraper = "0.23"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "io-std", "net", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "zstd", "deflate", "stream"] }
+encoding_rs = "0.8"
+httpdate = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+flate2 = "1"
+brotli = "7"
+tempfile = "3"
+anyhow = "1"
+dirs = "5"
+rand = "0.8"
+libc = "0.2"
+
+[dev-dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+strip = true
+lto = "thin"
