@@ -108,6 +108,11 @@ impl Fetcher for ReqwestFetcher {
             for (k, v) in &req.headers {
                 r = r.header(k.as_str(), v.as_str());
             }
+            // What Node's fetch advertises: brotli only over https. A plain-http site that keys its
+            // bot wall on `br` (the fixture stands in for a TLS fingerprint) then sees the same client.
+            if !req.headers.keys().any(|k| k.eq_ignore_ascii_case("accept-encoding")) {
+                r = r.header("accept-encoding", if req.url.starts_with("https:") { "br, gzip, deflate" } else { "gzip, deflate" });
+            }
             if let Some(b) = req.body {
                 r = r.body(b);
             }
