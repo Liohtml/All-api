@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 /// `load`, open popups, embed iframes, download files, redirect to a login page, debounce search
 /// input, and serve very large bodies.
 mod edge {
+    #![allow(dead_code)]
     use axum::body::{Body, Bytes};
     use axum::extract::{Request, State};
     use axum::http::{HeaderValue, StatusCode};
