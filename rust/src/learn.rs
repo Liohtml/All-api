@@ -1,16 +1,17 @@
 //! Captured exchanges + example args -> an Operation (DESIGN.md "Learning", steps 1-8).
 //! Only example-arg values become params; everything else is kept verbatim.
 use crate::codec::{
-    Leaf, Step, covers, escape_str, escape_template, fill_slot_template, fill_template, get_at, header_name, last_token,
-    leaf_name, set_text, step_key, template_parts, template_refs, walk, TemplatePart,
+    Leaf, Step, TemplatePart, covers, escape_str, escape_template, fill_slot_template, fill_template, get_at, header_name, last_token,
+    leaf_name, set_text, step_key, template_parts, template_refs, walk,
 };
 use crate::extract::{infer_shape, inner_json, parse_body, xssi_of};
 use crate::secrets::{
-    SESSION_FIELD, SESSION_HEADER, URLISH, credential_name, high_entropy, is_credential, opaque_token, scan_secrets,
-    strip_quotes,
+    SESSION_FIELD, SESSION_HEADER, URLISH, credential_name, high_entropy, is_credential, opaque_token, scan_secrets, strip_quotes,
 };
 use crate::session::{Session, logged_in, parse_cookie_header};
-use crate::spec::{Charset, Escape, Format, Match, Operation, Param, ParamType, Request, ResponseSpec, Shape, Slot, Transform, Trigger, Volatile};
+use crate::spec::{
+    Charset, Escape, Format, Match, Operation, Param, ParamType, Request, ResponseSpec, Shape, Slot, Transform, Trigger, Volatile,
+};
 use crate::types::{CaptureResult, Exchange, StoredCookie};
 use crate::util::{as_text, decode_uri_component, encode_uri_component, iso_now, js_len, json, json_escape, now_ms, parse_url, re};
 use anyhow::{Result, anyhow, bail};
@@ -96,14 +97,26 @@ pub static ASSET_EXT: LazyLock<regex::Regex> = LazyLock::new(|| {
     re(r"(?i)\.(js|mjs|cjs|jsx|ts|css|scss|png|jpe?g|gif|svg|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|ogg|mp3|wav|wasm|map|pdf|zip)$")
 });
 const DENY_RESOURCE: [&str; 12] = [
-    "image", "font", "stylesheet", "script", "media", "manifest", "texttrack", "websocket", "eventsource", "preflight", "ping",
+    "image",
+    "font",
+    "stylesheet",
+    "script",
+    "media",
+    "manifest",
+    "texttrack",
+    "websocket",
+    "eventsource",
+    "preflight",
+    "ping",
     "cspviolationreport",
 ];
 static DENY_MIME: LazyLock<regex::Regex> = LazyLock::new(|| {
     re(r"(?i)^(image|font|video|audio)/|^text/(css|javascript)|^application/(javascript|x-javascript|font|octet-stream|wasm)")
 });
 static ANALYTICS: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)google-analytics\.com|googletagmanager\.com|doubleclick\.net|sentry\.io|/sentry/|segment\.(io|com)|mixpanel\.com|amplitude\.com|hotjar\.com|facebook\.com/tr|clarity\.ms|nr-data\.net|datadoghq|/(collect|beacon|log_event|telemetry|jot|csp-report|client_event|tracking|logging)(/|\?|$)")
+    re(
+        r"(?i)google-analytics\.com|googletagmanager\.com|doubleclick\.net|sentry\.io|/sentry/|segment\.(io|com)|mixpanel\.com|amplitude\.com|hotjar\.com|facebook\.com/tr|clarity\.ms|nr-data\.net|datadoghq|/(collect|beacon|log_event|telemetry|jot|csp-report|client_event|tracking|logging)(/|\?|$)",
+    )
 });
 static MEDIA_MIME: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)^(image|font|video|audio)/"));
 // Pages and APIs can end in .js (github.com/vercel/next.js, /repos/chart.js): the extension only means an asset for subresources.
@@ -382,7 +395,9 @@ impl ShortCarrier {
         let same: Vec<&Run2Request> = self
             .run2
             .iter()
-            .filter(|r| r.ep.head == ep.head && r.ep.segs.len() == ep.segs.len() && ep.segs.iter().zip(&r.ep.segs).all(|(s, t)| self.follows(s, t)))
+            .filter(|r| {
+                r.ep.head == ep.head && r.ep.segs.len() == ep.segs.len() && ep.segs.iter().zip(&r.ep.segs).all(|(s, t)| self.follows(s, t))
+            })
             .collect();
         let want = self.other.get(k).cloned().unwrap_or_default();
         whole.iter().any(|l| same.iter().any(|r| r.leaves.get(&step_key(&l.at)) == Some(&want)))
@@ -406,7 +421,6 @@ pub struct RankOptions<'a> {
     /// the other run, which says where a short example (under 3 characters) is carried
     pub second: Option<Second<'a>>,
 }
-
 
 /// Noise-filtered requests, best first: carries the example values, succeeded, returned JSON.
 /// A data-less answer (a beacon's ack) ranks below every real answer.
@@ -567,22 +581,23 @@ pub fn bare_request(method: &str, url: &str) -> Request {
 
 /// Stable identity, with filled and hash-like path segments wildcarded.
 fn build_match(req: &Request, slots: &[Slot]) -> Match {
-    let filled: HashSet<usize> = slots
-        .iter()
-        .filter(|s| s.at.len() == 1 && s.at[0].starts_with("path:"))
-        .filter_map(|s| s.at[0][5..].parse().ok())
-        .collect();
+    let filled: HashSet<usize> =
+        slots.iter().filter(|s| s.at.len() == 1 && s.at[0].starts_with("path:")).filter_map(|s| s.at[0][5..].parse().ok()).collect();
     let u = parse_url(&req.url).expect("a learned request has a URL");
     static DIGITS: LazyLock<regex::Regex> = LazyLock::new(|| re(r"^\d{6,}$"));
-    let path = u
-        .path()
-        .split('/')
-        .enumerate()
-        .map(|(i, seg)| {
-            if i > 0 && (filled.contains(&(i - 1)) || hash_like(seg) || DIGITS.is_match(seg)) { "*".to_string() } else { seg.to_string() }
-        })
-        .collect::<Vec<_>>()
-        .join("/");
+    let path =
+        u.path()
+            .split('/')
+            .enumerate()
+            .map(|(i, seg)| {
+                if i > 0 && (filled.contains(&(i - 1)) || hash_like(seg) || DIGITS.is_match(seg)) {
+                    "*".to_string()
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
     Match {
         method: Some(req.method.to_uppercase()),
         host: Some(u.host_str().unwrap_or("").to_string()),
@@ -600,7 +615,9 @@ static DROP_HEADER: LazyLock<regex::Regex> =
 // Headers the browser computes itself: an example inside them is a coincidence ("apple" in the
 // user-agent, "app" in application/json), and they never carry a nonce of the site's.
 pub static BROWSER_HEADER: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)^(user-agent|accept(-[a-z-]+)?|content-(type|language)|sec-[a-z0-9-]+|if-[a-z-]+|priority|dnt|upgrade-insecure-requests|cache-control|pragma|x-requested-with)$")
+    re(
+        r"(?i)^(user-agent|accept(-[a-z-]+)?|content-(type|language)|sec-[a-z0-9-]+|if-[a-z-]+|priority|dnt|upgrade-insecure-requests|cache-control|pragma|x-requested-with)$",
+    )
 });
 fn url_header(at: &[Step]) -> bool {
     at[0] == "header:referer" || at[0] == "header:origin"
@@ -666,7 +683,13 @@ fn template_of(e: &Exchange) -> Request {
     Request { method: e.request.method.to_uppercase(), url: e.request.url.clone(), headers: headers_of(e), body: e.request.body.clone() }
 }
 
-fn pick_exchange<'a>(input: &LearnInput, exchanges: &'a [Exchange], args: &Args, pages: &[String], warnings: &mut Vec<String>) -> Result<&'a Exchange> {
+fn pick_exchange<'a>(
+    input: &LearnInput,
+    exchanges: &'a [Exchange],
+    args: &Args,
+    pages: &[String],
+    warnings: &mut Vec<String>,
+) -> Result<&'a Exchange> {
     if let Some(id) = input.id {
         return exchanges.iter().find(|x| x.id == id).ok_or_else(|| anyhow!("no captured request with id {id}"));
     }
@@ -678,10 +701,11 @@ fn pick_exchange<'a>(input: &LearnInput, exchanges: &'a [Exchange], args: &Args,
         (Some(ex2), Some(a2)) => Some(Second { exchanges: ex2, args: a2 }),
         _ => None,
     };
-    let ranked: Vec<Candidate> = rank_candidates(&pool, args, RankOptions { all: input.matcher.is_some(), pages: Some(pages.to_vec()), second })
-        .into_iter()
-        .filter(|c| input.matcher.is_some() || !c.hits.is_empty())
-        .collect();
+    let ranked: Vec<Candidate> =
+        rank_candidates(&pool, args, RankOptions { all: input.matcher.is_some(), pages: Some(pages.to_vec()), second })
+            .into_iter()
+            .filter(|c| input.matcher.is_some() || !c.hits.is_empty())
+            .collect();
     if ranked.is_empty() {
         return Err(match &input.matcher {
             Some(m) => anyhow!("no captured request matches {}", json(&serde_json::to_value(m).unwrap_or(Value::Null))),
@@ -750,7 +774,9 @@ fn json_pointers(root: &Value, want: &str, ptr: &str) -> Vec<String> {
         return vec![ptr.to_string()];
     }
     match root {
-        Value::Object(o) => o.iter().flat_map(|(k, c)| json_pointers(c, want, &format!("{ptr}/{}", crate::codec::escape_token(k)))).collect(),
+        Value::Object(o) => {
+            o.iter().flat_map(|(k, c)| json_pointers(c, want, &format!("{ptr}/{}", crate::codec::escape_token(k)))).collect()
+        }
         Value::Array(a) => a.iter().enumerate().flat_map(|(i, c)| json_pointers(c, want, &format!("{ptr}/{i}"))).collect(),
         _ => vec![],
     }
@@ -900,18 +926,24 @@ fn templated_slot(hits: &[Hit]) -> Slot {
     // one alternation, longest first, so "nasa" never splits "nasagov"
     let mut texts: Vec<&String> = by_text.keys().collect();
     texts.sort_by_key(|t| std::cmp::Reverse(t.len()));
-    let alts: Vec<String> = texts
-        .iter()
-        .map(|t| if digits_only(t) { format!(r"(?<!\d){t}(?!\d)") } else { regex::escape(&escape_template(t)) })
-        .collect();
+    let alts: Vec<String> =
+        texts.iter().map(|t| if digits_only(t) { format!(r"(?<!\d){t}(?!\d)") } else { regex::escape(&escape_template(t)) }).collect();
     let alt = crate::util::fre(&format!("(?i){}", alts.join("|")));
     let escaped = escape_template(&leaf.value);
     let template = alt
-        .replace_all(&escaped, |c: &fancy_regex::Captures| format!("{{{}}}", by_text.get(&c[0].to_lowercase()).cloned().unwrap_or_default()))
+        .replace_all(&escaped, |c: &fancy_regex::Captures| {
+            format!("{{{}}}", by_text.get(&c[0].to_lowercase()).cloned().unwrap_or_default())
+        })
         .into_owned();
     let plain: Vec<Hit> = hits.iter().map(|h| Hit { leaf: h.leaf.clone(), text: split(&h.text).1, encoded: h.encoded }).collect();
     let escape = escape_of(leaf, &plain);
-    Slot { param: Some(by_text.values().next().cloned().unwrap_or_default()), at: leaf.at.clone(), template: Some(template), escape, ..Default::default() }
+    Slot {
+        param: Some(by_text.values().next().cloned().unwrap_or_default()),
+        at: leaf.at.clone(),
+        template: Some(template),
+        escape,
+        ..Default::default()
+    }
 }
 
 type Disproved = IndexMap<String, String>;
@@ -949,7 +981,14 @@ struct ParamSlots {
 
 /// Step 2: slots for the example args. An exact leaf is a slot; a leaf holding the value inside other text
 /// (never a number, flag or browser header) is a templated slot.
-fn param_slots(leaves: &[Leaf], args: &Args, locs: &Locations, warnings: &mut Vec<String>, disproved: &Disproved, short: &HashSet<String>) -> Result<ParamSlots> {
+fn param_slots(
+    leaves: &[Leaf],
+    args: &Args,
+    locs: &Locations,
+    warnings: &mut Vec<String>,
+    disproved: &Disproved,
+    short: &HashSet<String>,
+) -> Result<ParamSlots> {
     let mut slots: Vec<Slot> = Vec::new();
     let mut types: HashMap<String, ParamType> = HashMap::new();
     let mut found: IndexMap<String, Found> = IndexMap::new();
@@ -980,7 +1019,10 @@ fn param_slots(leaves: &[Leaf], args: &Args, locs: &Locations, warnings: &mut Ve
         let f = scalar_hits(name, raw, leaves, short.contains(name))?;
         found.insert(
             name.clone(),
-            Found { exact: f.exact.into_iter().filter(|l| open(name, l)).collect(), part: f.part.into_iter().filter(|h| open(name, &h.leaf)).collect() },
+            Found {
+                exact: f.exact.into_iter().filter(|l| open(name, l)).collect(),
+                part: f.part.into_iter().filter(|h| open(name, &h.leaf)).collect(),
+            },
         );
     }
     // A leaf that equals one param's value belongs to that param, even if another's value is inside it.
@@ -1015,7 +1057,11 @@ fn param_slots(leaves: &[Leaf], args: &Args, locs: &Locations, warnings: &mut Ve
             }
         }
         for h in part {
-            partial.entry(key(&h.leaf.at)).or_default().push(Hit { leaf: h.leaf.clone(), text: format!("{name}\0{}", h.text), encoded: h.encoded });
+            partial.entry(key(&h.leaf.at)).or_default().push(Hit {
+                leaf: h.leaf.clone(),
+                text: format!("{name}\0{}", h.text),
+                encoded: h.encoded,
+            });
         }
     }
     for hits in partial.values() {
@@ -1086,8 +1132,16 @@ fn live_values(cookies: &[StoredCookie], storage: Option<&IndexMap<String, Strin
     }
     for c in cookies {
         let decoded = decode_uri_component(&c.value).unwrap_or_else(|| c.value.clone());
-        put(&mut out, &strip_quotes(&c.value), Live { reference: format!("cookie:{}", c.name), transform: Some(Transform::StripQuotes), value: None, secret: None });
-        put(&mut out, &decoded, Live { reference: format!("cookie:{}", c.name), transform: Some(Transform::UrlDecode), value: None, secret: None });
+        put(
+            &mut out,
+            &strip_quotes(&c.value),
+            Live { reference: format!("cookie:{}", c.name), transform: Some(Transform::StripQuotes), value: None, secret: None },
+        );
+        put(
+            &mut out,
+            &decoded,
+            Live { reference: format!("cookie:{}", c.name), transform: Some(Transform::UrlDecode), value: None, secret: None },
+        );
     }
     // Apps keep settings and saved requests in storage too. A stored value is a credential under a
     // credential's name or when it is random-looking; a JSON text is judged by its key and its leaves.
@@ -1095,12 +1149,30 @@ fn live_values(cookies: &[StoredCookie], storage: Option<&IndexMap<String, Strin
     let secret = |v: &str, names: &[&str]| names.iter().any(|n| is_credential(n, v)) || (!is_json(v) && high_entropy(v));
     if let Some(storage) = storage {
         for (name, value) in storage {
-            put(&mut out, value, Live { reference: format!("session:{name}"), transform: None, value: Some(value.clone()), secret: Some(secret(value, &[name])) });
+            put(
+                &mut out,
+                value,
+                Live {
+                    reference: format!("session:{name}"),
+                    transform: None,
+                    value: Some(value.clone()),
+                    secret: Some(secret(value, &[name])),
+                },
+            );
             fn visit(out: &mut IndexMap<String, Live>, v: &Value, k: &str, name: &str, secret: &dyn Fn(&str, &[&str]) -> bool) {
                 match v {
                     Value::String(s) => {
                         let leaf = k.rsplit('/').next().unwrap_or("");
-                        put(out, s, Live { reference: format!("session:{name}/{k}"), transform: None, value: Some(s.clone()), secret: Some(secret(s, &[name, leaf])) });
+                        put(
+                            out,
+                            s,
+                            Live {
+                                reference: format!("session:{name}/{k}"),
+                                transform: None,
+                                value: Some(s.clone()),
+                                secret: Some(secret(s, &[name, leaf])),
+                            },
+                        );
                     }
                     Value::Object(o) => {
                         for (kk, c) in o {
@@ -1155,7 +1227,12 @@ impl Refs {
         if !known.as_ref().map(|k| k.reference.starts_with("cookie:")).unwrap_or(false) {
             self.live.insert(
                 value.to_string(),
-                Live { reference: format!("session:{name}"), transform: None, value: Some(value.to_string()), secret: Some(known.and_then(|k| k.secret).unwrap_or(true)) },
+                Live {
+                    reference: format!("session:{name}"),
+                    transform: None,
+                    value: Some(value.to_string()),
+                    secret: Some(known.and_then(|k| k.secret).unwrap_or(true)),
+                },
             );
         }
         format!("session:{name}")
@@ -1214,7 +1291,12 @@ struct SecretTest {
 
 impl SecretTest {
     fn new(exchanges: &[Exchange], public_names: &HashSet<String>) -> SecretTest {
-        let scripts = exchanges.iter().filter(|e| static_bundle(e)).filter_map(|e| e.response.as_ref()?.body.clone()).filter(|b| !b.is_empty()).collect();
+        let scripts = exchanges
+            .iter()
+            .filter(|e| static_bundle(e))
+            .filter_map(|e| e.response.as_ref()?.body.clone())
+            .filter(|b| !b.is_empty())
+            .collect();
         SecretTest { scripts, public_names: public_names.clone(), shipped: indexmap::IndexSet::new() }
     }
     /// Asked about a shipped value, it says no and notes the name in `shipped`, for the op's public list.
@@ -1284,7 +1366,11 @@ fn issued_refs(refs: &mut Refs, leaves: &[Leaf], issued: &[String]) {
             continue;
         }
         // A bootstrap token belongs to this operation and request position, not every field named t.
-        let reference = refs.live.get(&leaf.value).map(|l| l.reference.clone()).unwrap_or_else(|| format!("session:{name}@{}", encode_uri_component(&key(&leaf.at))));
+        let reference = refs
+            .live
+            .get(&leaf.value)
+            .map(|l| l.reference.clone())
+            .unwrap_or_else(|| format!("session:{name}@{}", encode_uri_component(&key(&leaf.at))));
         refs.add_ref(&leaf.at.clone(), Slot::reference(&reference, vec![]), Some(&leaf.value));
     }
 }
@@ -1333,8 +1419,10 @@ fn templated_ref(refs: &mut Refs, leaf: &Leaf, long: &[(String, Live)]) -> Resul
     let mut template = escape_template(&leaf.value);
     let mut primary: Option<(String, Live, Option<Escape>)> = None;
     for (v, l) in long {
-        let forms: [(String, Option<Escape>); 3] = [(v.clone(), None), (encode_uri_component(v), Some(Escape::Url)), (json_escape(v), Some(Escape::Json))];
-        let form = forms.iter().find(|(f, esc)| template.contains(&escape_template(f)) && primary.as_ref().map(|p| p.2 == *esc).unwrap_or(true));
+        let forms: [(String, Option<Escape>); 3] =
+            [(v.clone(), None), (encode_uri_component(v), Some(Escape::Url)), (json_escape(v), Some(Escape::Json))];
+        let form =
+            forms.iter().find(|(f, esc)| template.contains(&escape_template(f)) && primary.as_ref().map(|p| p.2 == *esc).unwrap_or(true));
         let Some((f, esc)) = form else { continue };
         // the first value found is the slot's own, so a later one that needs a transform is refused
         if primary.is_some() && l.transform.is_some() {
@@ -1347,7 +1435,11 @@ fn templated_ref(refs: &mut Refs, leaf: &Leaf, long: &[(String, Live)]) -> Resul
         }
     }
     let Some((reference, l, escape)) = primary else { return Ok(()) };
-    refs.add_ref(&leaf.at.clone(), Slot { reference: Some(reference), transform: l.transform, template: Some(template), escape, ..Default::default() }, None);
+    refs.add_ref(
+        &leaf.at.clone(),
+        Slot { reference: Some(reference), transform: l.transform, template: Some(template), escape, ..Default::default() },
+        None,
+    );
     Ok(())
 }
 
@@ -1360,7 +1452,11 @@ fn embedded_refs(refs: &mut Refs, leaves: &[Leaf], mut request: Request) -> Resu
         }
         let k = key(&leaf.at);
         // A param's templated leaf can carry one too (next=/search?q={q}&auth=<cookie>): its template gets a ref hole.
-        let own_idx = if refs.taken.contains(&k) { refs.slots.iter().position(|s| s.is_param() && s.template.is_some() && key(&s.at) == k) } else { None };
+        let own_idx = if refs.taken.contains(&k) {
+            refs.slots.iter().position(|s| s.is_param() && s.template.is_some() && key(&s.at) == k)
+        } else {
+            None
+        };
         if let Some(i) = own_idx {
             let mut own = refs.slots[i].clone();
             request = hole_refs(refs, &mut own, &long, request)?;
@@ -1393,7 +1489,11 @@ fn refuse_leftover_text(slots: &[Slot], leaves: &[Leaf]) -> Result<()> {
         if !named && token.is_none() {
             continue;
         }
-        let why = if named { format!("by the leaf's name, {name}") } else { format!("an unbroken random-looking run of {} characters", token.unwrap().len()) };
+        let why = if named {
+            format!("by the leaf's name, {name}")
+        } else {
+            format!("an unbroken random-looking run of {} characters", token.unwrap().len())
+        };
         bail!(
             "{} holds a param inside text that is a credential ({why}): that text cannot be a reference and would stay in the spec. Not learned. If it is the same for every visitor, mark the field or header with --public {name}; otherwise {ANOTHER_REQUEST}",
             at.join(" > ")
@@ -1406,7 +1506,8 @@ fn refuse_leftover_text(slots: &[Slot], leaves: &[Leaf]) -> Result<()> {
 /// of it is in the spec: the refs inside it are dropped. A param inside it could not be filled, and
 /// the learn is refused. `held`: every cookie and stored value, as the passes began.
 fn sent_whole(refs: &mut Refs, held: &HashSet<String>) -> Result<()> {
-    let inside = |whole: &Slot, s: &Slot| s.at.len() > whole.at.len() && whole.at.iter().enumerate().all(|(i, step)| s.at.get(i) == Some(step));
+    let inside =
+        |whole: &Slot, s: &Slot| s.at.len() > whole.at.len() && whole.at.iter().enumerate().all(|(i, step)| s.at.get(i) == Some(step));
     let wholes: Vec<Slot> = refs.slots.iter().filter(|s| s.is_ref()).cloned().collect();
     for whole in &wholes {
         if let Some(param) = refs.slots.iter().find(|s| s.is_param() && inside(whole, s)) {
@@ -1414,7 +1515,11 @@ fn sent_whole(refs: &mut Refs, held: &HashSet<String>) -> Result<()> {
             // a cookie or a stored value is a ref under a name marked public too: no way on there
             let r = whole.ref_str();
             let live = r.starts_with("cookie:") || refs.session_values.get(&r[8.min(r.len())..]).map(|v| held.contains(v)).unwrap_or(false);
-            let vouch = if live { String::new() } else { format!("if the rest of {where_} is the same for every visitor, mark it with --public {}; otherwise ", leaf_name(&whole.at)) };
+            let vouch = if live {
+                String::new()
+            } else {
+                format!("if the rest of {where_} is the same for every visitor, mark it with --public {}; otherwise ", leaf_name(&whole.at))
+            };
             bail!(
                 "{where_} is a session value ({r}), sent whole from the session at call time, so the param {} inside it ({}) could not be filled. Not learned: {vouch}{ANOTHER_REQUEST}",
                 param.param.as_deref().unwrap_or(""),
@@ -1423,11 +1528,15 @@ fn sent_whole(refs: &mut Refs, held: &HashSet<String>) -> Result<()> {
         }
         refs.slots.retain(|s| !inside(whole, s));
     }
-    let used: HashSet<String> = refs.slots.iter().flat_map(|s| {
-        let mut v: Vec<String> = s.reference.iter().cloned().collect();
-        v.extend(template_refs(s.template.as_deref().unwrap_or("")));
-        v
-    }).collect();
+    let used: HashSet<String> = refs
+        .slots
+        .iter()
+        .flat_map(|s| {
+            let mut v: Vec<String> = s.reference.iter().cloned().collect();
+            v.extend(template_refs(s.template.as_deref().unwrap_or("")));
+            v
+        })
+        .collect();
     refs.session_values.retain(|name, _| used.contains(&format!("session:{name}")));
     Ok(())
 }
@@ -1460,7 +1569,8 @@ fn session_refs(input: &LearnInput, ex: &Exchange, captured: &Request, leaves: &
         .map(|(value, l)| (format!("storage:{}", &l.reference[8..]), value.clone()))
         .collect();
     let held: HashSet<String> = live.keys().cloned().collect();
-    let mut refs = Refs { slots: params.to_vec(), taken: params.iter().map(|s| key(&s.at)).collect(), live, session_values: IndexMap::new() };
+    let mut refs =
+        Refs { slots: params.to_vec(), taken: params.iter().map(|s| key(&s.at)).collect(), live, session_values: IndexMap::new() };
     let public_names: HashSet<String> = input.public.clone().unwrap_or_default().iter().map(|h| h.to_lowercase()).collect();
     let open: Vec<Leaf> = leaves.iter().filter(|l| !public_names.contains(&leaf_name(&l.at).to_lowercase())).cloned().collect();
     live_refs(&mut refs, leaves, &public_names);
@@ -1518,7 +1628,9 @@ fn placed(request: &Request, live: &Session, whole: &[String]) -> Vec<String> {
     let hits: Vec<(String, String)> = scan_secrets(&texts, live, &HashSet::new()).secrets.iter().map(|h| split(h)).collect();
     let deepest: Vec<&(String, String)> = hits
         .iter()
-        .filter(|(where_, what)| !hits.iter().any(|(w, x)| x == what && at.get(where_).zip(at.get(w)).map(|(a, b)| covers(a, b)).unwrap_or(false)))
+        .filter(|(where_, what)| {
+            !hits.iter().any(|(w, x)| x == what && at.get(where_).zip(at.get(w)).map(|(a, b)| covers(a, b)).unwrap_or(false))
+        })
         .collect();
     let mut out: Vec<String> = deepest.iter().map(|(w, x)| format!("{w}{x}")).collect();
     for hit in whole {
@@ -1545,7 +1657,8 @@ struct Known {
 /// may be left in the stored request or a slot template, in any encoding the save-time scan reads.
 fn refuse_leftover(request: &Request, slots: &[Slot], known: &Known) -> Result<()> {
     let example = |at: &[Step]| slots.iter().any(|s| s.is_param() && (key(&s.at) == key(at) || covers(&s.at, at)));
-    let templates: Value = Value::Object(slots.iter().filter_map(|s| s.template.as_ref().map(|t| (s.at.join(" > "), Value::String(t.clone())))).collect());
+    let templates: Value =
+        Value::Object(slots.iter().filter_map(|s| s.template.as_ref().map(|t| (s.at.join(" > "), Value::String(t.clone())))).collect());
     let look = |live: &Session, exempt: &dyn Fn(&[Step]) -> bool| -> Vec<String> {
         let mut rest = request.clone();
         let mut gone: Vec<Vec<Step>> = Vec::new();
@@ -1576,7 +1689,13 @@ fn refuse_leftover(request: &Request, slots: &[Slot], known: &Known) -> Result<(
 /// Session values are stored per site. Two operations may use different tokens under the same
 /// field/header name, so newly learned references include the operation name. Old specs still work.
 fn scope_refs(slots: &[Slot], op_name: &str) -> Vec<Slot> {
-    let scope = |r: &str| if let Some(rest) = r.strip_prefix("session:") { format!("session:{}/{rest}", encode_uri_component(op_name)) } else { r.to_string() };
+    let scope = |r: &str| {
+        if let Some(rest) = r.strip_prefix("session:") {
+            format!("session:{}/{rest}", encode_uri_component(op_name))
+        } else {
+            r.to_string()
+        }
+    };
     slots
         .iter()
         .map(|s| {
@@ -1634,7 +1753,8 @@ fn volatile_anchors(req: &Request, leaves: &[Leaf], slots: &[Slot]) -> Vec<Volat
                 continue;
             }
             let i: usize = first[5..].parse().unwrap_or(0);
-            let anchor = op_name.clone().or_else(|| segs.get(i + 1).cloned()).or_else(|| if i > 0 { segs.get(i - 1).cloned() } else { None });
+            let anchor =
+                op_name.clone().or_else(|| segs.get(i + 1).cloned()).or_else(|| if i > 0 { segs.get(i - 1).cloned() } else { None });
             if let Some(anchor) = anchor {
                 out.push(Volatile { at: leaf.at.clone(), shape: shape_of(&leaf.value), anchor: anchor.clone() });
                 anchor_of.insert(leaf.value.clone(), anchor);
@@ -1701,7 +1821,11 @@ pub fn suggest_extract(root: &Value, values: &[String]) -> Option<String> {
                 queue.push_back((inner, p, depth + 1));
             } else if c.is_object() || c.is_array() {
                 queue.push_back((c, p, depth + 1));
-            } else if !path.is_empty() && !c.is_null() && values.contains(&as_text(&c).to_lowercase()) && holder.as_ref().map(|(_, d)| depth > *d).unwrap_or(true) {
+            } else if !path.is_empty()
+                && !c.is_null()
+                && values.contains(&as_text(&c).to_lowercase())
+                && holder.as_ref().map(|(_, d)| depth > *d).unwrap_or(true)
+            {
                 holder = Some((path.clone(), depth));
             }
         }
@@ -1726,7 +1850,8 @@ fn learn_response(e: &Exchange, values: &[String], warnings: &mut Vec<String>) -
         };
     }
     warnings.push(if r.content_type.to_lowercase().contains("html") {
-        "response is HTML: add --html '{\"items\":\"<css>\",\"fields\":{...}}' for a list, or --embedded '<regex>' for JSON inside the page".to_string()
+        "response is HTML: add --html '{\"items\":\"<css>\",\"fields\":{...}}' for a list, or --embedded '<regex>' for JSON inside the page"
+            .to_string()
     } else {
         format!("response is {} text, returned raw", if r.content_type.is_empty() { "untyped" } else { &r.content_type })
     });
@@ -1736,7 +1861,16 @@ fn learn_response(e: &Exchange, values: &[String], warnings: &mut Vec<String>) -
 /// Two-run diff: positions that change without an arg change are nonces (unless they look like
 /// counters). A param's place that stays as it was although the param changed is noted in `disproved`.
 #[allow(clippy::too_many_arguments)]
-fn diff_runs(req1: &Request, req2: &Request, slots: &[Slot], args1: &Args, args2: &Args, warnings: &mut Vec<String>, disproved: &mut Disproved, short_params: &HashSet<String>) -> Vec<String> {
+fn diff_runs(
+    req1: &Request,
+    req2: &Request,
+    slots: &[Slot],
+    args1: &Args,
+    args2: &Args,
+    warnings: &mut Vec<String>,
+    disproved: &mut Disproved,
+    short_params: &HashSet<String>,
+) -> Vec<String> {
     let by_slot: HashMap<String, &Slot> = slots.iter().map(|s| (key(&s.at), s)).collect();
     let second: HashMap<String, Leaf> = walk(req2).into_iter().map(|l| (key(&l.at), l)).collect();
     let values2: Vec<String> = example_values(args2).into_iter().map(|(_, v)| v).collect();
@@ -1760,10 +1894,14 @@ fn diff_runs(req1: &Request, req2: &Request, slots: &[Slot], args1: &Args, args2
             }
         }
         // A short example is placed only where run 2 proves it: a whole leaf holding example 2's value.
-        let short = slot.map(|s| s.is_param() && s.template.is_none() && short_params.contains(s.param.as_deref().unwrap_or(""))).unwrap_or(false);
+        let short =
+            slot.map(|s| s.is_param() && s.template.is_none() && short_params.contains(s.param.as_deref().unwrap_or(""))).unwrap_or(false);
         let Some(other) = other else {
             if short {
-                disproved.insert(pair_key(slot.unwrap().param.as_deref().unwrap_or(""), &leaf.at), format!("{} is not in run 2's request", leaf.at.join(" > ")));
+                disproved.insert(
+                    pair_key(slot.unwrap().param.as_deref().unwrap_or(""), &leaf.at),
+                    format!("{} is not in run 2's request", leaf.at.join(" > ")),
+                );
             }
             missing.push(leaf.at.join(" > "));
             continue;
@@ -1787,7 +1925,13 @@ fn diff_runs(req1: &Request, req2: &Request, slots: &[Slot], args1: &Args, args2
                     Some(t) => fill_template(t, &args_of(&[(p, "\0")])).contains('\0'),
                 };
                 let where_ = format!("{} is {}", leaf.at.join(" > "), json(&Value::String(leaf.value.clone())));
-                let went = |p: &str| format!("{p} went from {} to {}", json(args1.get(p).unwrap_or(&Value::Null)), json(args2.get(p).unwrap_or(&Value::Null)));
+                let went = |p: &str| {
+                    format!(
+                        "{p} went from {} to {}",
+                        json(args1.get(p).unwrap_or(&Value::Null)),
+                        json(args2.get(p).unwrap_or(&Value::Null))
+                    )
+                };
                 for p in changed.iter().filter(|p| fills(p)) {
                     disproved.insert(
                         pair_key(p, &leaf.at),
@@ -1814,7 +1958,12 @@ fn diff_runs(req1: &Request, req2: &Request, slots: &[Slot], args1: &Args, args2
             if literals.iter().any(|l| !l.is_empty() && !other.value.to_lowercase().contains(&l.to_lowercase())) {
                 nonces.push(leaf.at.join(" > "));
             } else {
-                warnings.push(format!("run 2 has {} at {}, expected {}", json(&Value::String(other.value.clone())), leaf.at.join(" > "), json(&Value::String(want))));
+                warnings.push(format!(
+                    "run 2 has {} at {}, expected {}",
+                    json(&Value::String(other.value.clone())),
+                    leaf.at.join(" > "),
+                    json(&Value::String(want))
+                ));
             }
             continue;
         }
@@ -1832,7 +1981,11 @@ fn diff_runs(req1: &Request, req2: &Request, slots: &[Slot], args1: &Args, args2
         }
     }
     if !missing.is_empty() {
-        warnings.push(format!("run 2 lacks {} position(s) of run 1, e.g. {}", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join("; ")));
+        warnings.push(format!(
+            "run 2 lacks {} position(s) of run 1, e.g. {}",
+            missing.len(),
+            missing.iter().take(3).cloned().collect::<Vec<_>>().join("; ")
+        ));
     }
     nonces
 }
@@ -1845,7 +1998,16 @@ struct Diffed {
 /// Step 3: the tier a nonce forces. 3 when a position changes between the runs without an arg
 /// change (a nonce or signature), else 1. `request` and `slots` are run 1's, refs included.
 #[allow(clippy::too_many_arguments)]
-fn two_run_diff(input: &LearnInput, first: &Exchange, request: &Request, slots: &[Slot], matcher: &Match, warnings: &mut Vec<String>, disproved: &mut Disproved, short: &HashSet<String>) -> Result<Diffed> {
+fn two_run_diff(
+    input: &LearnInput,
+    first: &Exchange,
+    request: &Request,
+    slots: &[Slot],
+    matcher: &Match,
+    warnings: &mut Vec<String>,
+    disproved: &mut Disproved,
+    short: &HashSet<String>,
+) -> Result<Diffed> {
     let args1 = input.args1();
     let (Some(exchanges2), Some(args2)) = (&input.exchanges2, input.args2()) else {
         warnings.push("learned from one example; a second example set separates params from nonces".to_string());
@@ -1872,7 +2034,10 @@ fn two_run_diff(input: &LearnInput, first: &Exchange, request: &Request, slots: 
         if !short.is_empty() {
             let mut names: Vec<&String> = short.iter().collect();
             names.sort();
-            bail!("{why}, so nothing confirms where the short example of {} goes. Check that the second example loads the same kind of page, or pass --match", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+            bail!(
+                "{why}, so nothing confirms where the short example of {} goes. Check that the second example loads the same kind of page, or pass --match",
+                names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            );
         }
         Ok(())
     };
@@ -1883,10 +2048,18 @@ fn two_run_diff(input: &LearnInput, first: &Exchange, request: &Request, slots: 
     };
     if answers.is_empty() {
         unproven("run 2's matching request does not answer like run 1's")?;
-        warnings.push("run 2's matching request does not answer like run 1's (no data, or not what the recipe reads): it disproves nothing".to_string());
+        warnings.push(
+            "run 2's matching request does not answer like run 1's (no data, or not what the recipe reads): it disproves nothing"
+                .to_string(),
+        );
     }
     let exchange2 = by_id(top);
-    let req2 = Request { method: exchange2.request.method.clone(), url: exchange2.request.url.clone(), headers: headers_of(&exchange2), body: exchange2.request.body.clone() };
+    let req2 = Request {
+        method: exchange2.request.method.clone(),
+        url: exchange2.request.url.clone(),
+        headers: headers_of(&exchange2),
+        body: exchange2.request.body.clone(),
+    };
     // a request that is not run 1's counterpart still shows nonces, but is no evidence against a slot
     let mut scratch: Disproved = IndexMap::new();
     let proof: &mut Disproved = if answers.is_empty() { &mut scratch } else { disproved };
@@ -1948,7 +2121,11 @@ fn learn(input: &LearnInput, disproved: &Disproved) -> Result<Learned> {
 
     let params: Vec<Param> = args1
         .iter()
-        .map(|(name, example)| Param { kind: param.types.get(name).copied().unwrap_or(ParamType::String), example: Some(example.clone()), ..Param::new(name) })
+        .map(|(name, example)| Param {
+            kind: param.types.get(name).copied().unwrap_or(ParamType::String),
+            example: Some(example.clone()),
+            ..Param::new(name)
+        })
         .collect();
 
     let operation = Operation {

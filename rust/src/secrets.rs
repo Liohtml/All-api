@@ -8,12 +8,16 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 pub static SESSION_HEADER: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)^(authorization|x-[a-z0-9-]*token|x-csrf[a-z0-9-]*|x-xsrf[a-z0-9-]*|x-goog-batchexecute-bgr|x-client-transaction-id|x-fb-lsd|x-ig-www-claim)$")
+    re(
+        r"(?i)^(authorization|x-[a-z0-9-]*token|x-csrf[a-z0-9-]*|x-xsrf[a-z0-9-]*|x-goog-batchexecute-bgr|x-client-transaction-id|x-fb-lsd|x-ig-www-claim)$",
+    )
 });
 // Per-session credentials sent in forms, queries or JSON bodies: Google's `at`, Meta's fb_dtsg/lsd,
 // Rails', ASP.NET's anti-CSRF fields, and OAuth-style access tokens.
 pub static SESSION_FIELD: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)^(at|fb_dtsg|lsd|authenticity_token|__RequestVerificationToken|_?csrf(_?token)?|_?xsrf(_?token)?|csrfmiddlewaretoken|(access_?)?token|session_?id)$")
+    re(
+        r"(?i)^(at|fb_dtsg|lsd|authenticity_token|__RequestVerificationToken|_?csrf(_?token)?|_?xsrf(_?token)?|csrfmiddlewaretoken|(access_?)?token|session_?id)$",
+    )
 });
 
 pub fn header_name(at: &[Step]) -> Option<String> {
@@ -61,10 +65,11 @@ pub fn high_entropy(v: &str) -> bool {
     if v.len() < 16 || v.chars().any(char::is_whitespace) || URLISH.is_match(v) {
         return false;
     }
-    let classes = [v.chars().any(|c| c.is_ascii_lowercase()), v.chars().any(|c| c.is_ascii_uppercase()), v.chars().any(|c| c.is_ascii_digit())]
-        .iter()
-        .filter(|x| **x)
-        .count();
+    let classes =
+        [v.chars().any(|c| c.is_ascii_lowercase()), v.chars().any(|c| c.is_ascii_uppercase()), v.chars().any(|c| c.is_ascii_digit())]
+            .iter()
+            .filter(|x| **x)
+            .count();
     if classes < 2 {
         return false;
     }
@@ -84,8 +89,7 @@ pub fn high_entropy(v: &str) -> bool {
 
 /// A literal a spec must not hold: a per-session field or header, or a random value under a credential's name.
 pub fn is_credential(name: &str, value: &str) -> bool {
-    ((SESSION_FIELD.is_match(name) || SESSION_HEADER.is_match(name)) && value.len() >= 8)
-        || (credential_name(name) && high_entropy(value))
+    ((SESSION_FIELD.is_match(name) || SESSION_HEADER.is_match(name)) && value.len() >= 8) || (credential_name(name) && high_entropy(value))
 }
 
 /// A token and nothing else, under any name: one unbroken run of 16+ characters of the hex or
@@ -115,8 +119,7 @@ static PCT_RUN: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?:%[0-9a-fA-F]{2
 /// Decode every %XX run on its own, so one stray "%" doesn't hide the rest.
 pub fn pct_decode(s: &str, plus: bool) -> String {
     let text = if plus { s.replace('+', " ") } else { s.to_string() };
-    PCT_RUN.replace_all(&text, |m: &regex::Captures| decode_uri_component(&m[0]).unwrap_or_else(|| m[0].to_string()))
-        .into_owned()
+    PCT_RUN.replace_all(&text, |m: &regex::Captures| decode_uri_component(&m[0]).unwrap_or_else(|| m[0].to_string())).into_owned()
 }
 
 static JSON_ESC: LazyLock<regex::Regex> = LazyLock::new(|| re(r#"\\(u[0-9a-fA-F]{4}|["\\/bfnrt])"#));
@@ -343,12 +346,8 @@ fn visit(v: &Value, path: &str, live: &[Live], allowed: &HashSet<String>, secret
                 }
             }
             let text = pct_decode(s, false); // percent-encoded bodies hide the blob's shape
-            let checks: [(&str, &regex::Regex); 4] = [
-                ("a JWT", &JWT),
-                ("a bearer token", &BEARER),
-                ("a long hex blob", &HEX_BLOB),
-                ("a long base64 blob", &BASE64_BLOB),
-            ];
+            let checks: [(&str, &regex::Regex); 4] =
+                [("a JWT", &JWT), ("a bearer token", &BEARER), ("a long hex blob", &HEX_BLOB), ("a long base64 blob", &BASE64_BLOB)];
             for (why, r) in checks {
                 let hit = r.find_iter(&text).map(|m| m.as_str()).find(|m| why != "a long base64 blob" || random(m));
                 if let Some(m) = hit {

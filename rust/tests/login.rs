@@ -142,8 +142,7 @@ async fn the_chosen_profile_is_remembered_a_self_heal_re_import_takes_it_even_th
         ImportOptions { login_cookies: li_cookies(), profile: None, file: None, push_profile: false },
     )
     .await
-    .err()
-    .expect("two signed-in profiles are refused");
+    .expect_err("two signed-in profiles are refused");
     assert!(e.to_string().contains("2 browser profiles are signed in"), "{e}");
     let r = import_session(
         "linkedin",
@@ -261,7 +260,7 @@ fn captures_the_newest_20_are_kept_none_older_than_24_h() {
     }
     let old = dir.join("cold.json");
     fs::write(&old, "{}").unwrap();
-    set_mtime(&old, now - Duration::from_millis(25 * 3600_000));
+    set_mtime(&old, now - Duration::from_millis(25 * 3_600_000));
     prune_captures(now_ms_at);
     let mut left: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
     left.sort();

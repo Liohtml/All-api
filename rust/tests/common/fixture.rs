@@ -284,12 +284,12 @@ async fn handle(State(inner): State<Arc<Mutex<Inner>>>, req: Request<Body>) -> R
             ),
         );
     }
-    if p.starts_with("/card/") {
+    if let Some(name) = p.strip_prefix("/card/") {
         return html(
             200,
             format!(
                 "<!doctype html><html><body>{LOGIN_FORM}<script>window.state = {}</script></body></html>",
-                json!({"member": {"name": &p[6..]}})
+                json!({"member": {"name": name}})
             ),
         );
     }

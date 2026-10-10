@@ -41,7 +41,12 @@ async fn captures_a_page_and_its_xhr() {
 
     // a write guard aborts the POST before it leaves
     let mut o = TriggerOptions::new(&format!("{}/compose", f.url), &profile);
-    o.steps = Some(serde_json::from_value(serde_json::json!([{"action": "fill", "selector": "#text", "value": "hello"}, {"action": "click", "selector": "#post"}])).unwrap());
+    o.steps = Some(
+        serde_json::from_value(
+            serde_json::json!([{"action": "fill", "selector": "#text", "value": "hello"}, {"action": "click", "selector": "#post"}]),
+        )
+        .unwrap(),
+    );
     o.intercept = Some(Arc::new(|e, _acting, _via| e.request.method != "GET"));
     o.timeout_ms = Some(20_000);
     let before = f.calls().len();

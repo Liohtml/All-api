@@ -120,8 +120,8 @@ fn route(path: &str, query: &HashMap<String, String>, cookie: &str) -> (u16, Vec
 async fn serve(mut sock: tokio::net::TcpStream, ws_messages: Arc<AtomicUsize>) {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
-    loop {
-        // one request per connection: the response says Connection: close
+    // one request per connection: the response says Connection: close
+    {
         let head_end = loop {
             if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
                 break i + 4;
@@ -182,7 +182,6 @@ async fn serve(mut sock: tokio::net::TcpStream, ws_messages: Arc<AtomicUsize>) {
         out.push_str(&body);
         let _ = sock.write_all(out.as_bytes()).await;
         let _ = sock.shutdown().await;
-        return;
     }
 }
 

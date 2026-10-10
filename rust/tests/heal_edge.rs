@@ -21,13 +21,13 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use url::Url;
 
 static HOME: LazyLock<Home> = LazyLock::new(Home::new);
 /// The TS file runs its tests one after the other under one home, and `beforeEach` wipes the state.
-static LOCK: Mutex<()> = Mutex::new(());
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone, Debug)]
 struct Seen {
@@ -193,8 +193,8 @@ fn rotating_handler(
 }
 
 /// `beforeEach`: a clean state, heal log and session store, and no request seen yet.
-fn fresh() -> MutexGuard<'static, ()> {
-    let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+async fn fresh() -> tokio::sync::MutexGuard<'static, ()> {
+    let g = LOCK.lock().await;
     let home = HOME.path();
     let _ = fs::remove_file(home.join("state.json"));
     let _ = fs::remove_file(home.join("heals.jsonl"));
@@ -211,7 +211,7 @@ fn first_op(site: &str) -> Operation {
 
 #[tokio::test]
 async fn single_rotation_heals_by_rescan_the_stored_template_is_sent_first() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("rot1", json!({}))).unwrap();
     let r = call("rot1", "user", args(json!({"name": "bob"})), tier1(rotating_handler(|| NEW.to_string()))).await;
     assert!(r.ok, "{}", j(&r));
@@ -223,7 +223,7 @@ async fn single_rotation_heals_by_rescan_the_stored_template_is_sent_first() {
 
 #[tokio::test]
 async fn repeated_rotation_a_second_rotation_more_than_10_min_after_the_first_heal_heals_again() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("rot2", json!({}))).unwrap();
     let cur = Arc::new(Mutex::new(NEW.to_string()));
     let c = cur.clone();
@@ -239,7 +239,7 @@ async fn repeated_rotation_a_second_rotation_more_than_10_min_after_the_first_he
 
 #[tokio::test]
 async fn an_expired_stale_mark_no_longer_blocks_a_heal_a_live_one_does() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("ttl", json!({}))).unwrap();
     set_state(|s| s["stale"]["ttl/user"] = json!({ "until": now_ms() + 60_000.0, "reason": "test" }));
     let blocked = call("ttl", "user", args(json!({"name": "bob"})), tier1(rotating_handler(|| NEW.to_string()))).await;
@@ -262,7 +262,7 @@ fn xproc_helper_mark_stale() {
 
 #[tokio::test]
 async fn a_stale_mark_written_by_another_process_is_honoured_by_this_one() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("xproc", json!({}))).unwrap();
     let out = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["xproc_helper_mark_stale", "--exact"])
@@ -279,7 +279,7 @@ async fn a_stale_mark_written_by_another_process_is_honoured_by_this_one() {
 
 #[tokio::test]
 async fn forced_heal_ignores_a_stale_mark_and_clears_it_on_success() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("force", json!({}))).unwrap();
     mark_stale("force", "user", "old failure", STALE_TTL_MS, now_ms(), None);
     let r = heal("force", "user", args(json!({"name": "alice"})), tier1(rotating_handler(|| NEW.to_string()))).await;
@@ -290,7 +290,7 @@ async fn forced_heal_ignores_a_stale_mark_and_clears_it_on_success() {
 
 #[tokio::test]
 async fn path_and_body_query_ids_rotate_together_both_are_swapped_the_body_keeps_its_encoding() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(
         &parse_site(&json!({
             "name": "both",
@@ -338,7 +338,7 @@ async fn path_and_body_query_ids_rotate_together_both_are_swapped_the_body_keeps
 
 #[tokio::test]
 async fn a_numeric_doc_id_in_a_json_body_is_swapped_as_a_json_number_not_a_string() {
-    let _g = fresh();
+    let _g = fresh().await;
     const OLD_DOC: &str = "1111111111111111";
     const NEW_DOC: &str = "9876543210987654";
     save_site(
@@ -388,7 +388,7 @@ async fn a_numeric_doc_id_in_a_json_body_is_swapped_as_a_json_number_not_a_strin
 // queryId answers 200 with the same shape, so validation passes and wrong data is saved.
 #[tokio::test]
 async fn anchor_that_is_a_prefix_of_another_operations_name_the_rescan_must_take_the_exact_operations_query_id() {
-    let _g = fresh();
+    let _g = fresh().await;
     const RIGHT: &str = "Rr1Ii2Gg3Hh4Tt5Ff6Oo7L";
     const YOU_KNOW: &str = "Yy1Oo2Uu3Kk4Nn5Oo6Ww7Z";
     save_site(
@@ -458,7 +458,7 @@ async fn anchor_that_is_a_prefix_of_another_operations_name_the_rescan_must_take
 // ~64 chars after it. The rescan takes the neighbour's id; validation passes on a same-shaped answer.
 #[tokio::test]
 async fn meta_style_module_layout_the_rescan_must_take_the_doc_id_of_the_anchors_own_module_not_the_previous_modules() {
-    let _g = fresh();
+    let _g = fresh().await;
     const OLD_DOC: &str = "1111111111111111";
     const FEED_DOC: &str = "2222222222222222";
     const PROFILE_DOC: &str = "3333333333333333";
@@ -529,7 +529,7 @@ async fn meta_style_module_layout_the_rescan_must_take_the_doc_id_of_the_anchors
 // mutation is sent for real.
 #[tokio::test]
 async fn write_heal_a_rescan_guess_must_never_send_a_different_mutation() {
-    let _g = fresh();
+    let _g = fresh().await;
     const RIGHT: &str = "Cc1Rr2Ee3Aa4Tt5Ee6Tt7W";
     const DOWNVOTE: &str = "Dd1Oo2Ww3Nn4Vv5Oo6Tt7E";
     save_site(
@@ -586,7 +586,7 @@ async fn write_heal_a_rescan_guess_must_never_send_a_different_mutation() {
 
 #[tokio::test]
 async fn a_write_is_sent_at_most_once_by_the_heal_the_one_validation_after_a_definite_404() {
-    let _g = fresh();
+    let _g = fresh().await;
     const RIGHT: &str = "Cc1Rr2Ee3Aa4Tt5Ee6Tt7W";
     save_site(
         &parse_site(&json!({
@@ -647,7 +647,7 @@ fn vote_op(base: &str, trigger: &str) -> Value {
 
 #[tokio::test]
 async fn write_heal_the_rescan_does_not_fetch_a_page_that_is_the_write_itself_a_get_vote_link_as_its_own_trigger() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(
         &parse_site(&json!({ "name": "wget", "baseUrl": "https://w.test", "operations": [vote_op("https://w.test", "/vote?id={id}")] }))
             .unwrap(),
@@ -725,7 +725,7 @@ fn header(p: &Parts, name: &str) -> String {
 
 #[tokio::test]
 async fn write_heal_the_rescan_does_not_follow_a_redirect_to_the_write_itself_a_reads_still_follows() {
-    let _g = fresh();
+    let _g = fresh().await;
     let votes = Arc::new(AtomicUsize::new(0));
     let v = votes.clone();
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
@@ -753,7 +753,7 @@ async fn write_heal_the_rescan_does_not_follow_a_redirect_to_the_write_itself_a_
 
 #[tokio::test]
 async fn a_reads_rescan_follows_a_long_chain_of_redirects_and_takes_only_a_redirect_status_for_one() {
-    let _g = fresh();
+    let _g = fresh().await;
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
         let n: i64 = params(p).get("n").and_then(|s| s.parse().ok()).unwrap_or(0);
         let page = format!("<script>x={{queryId:\"{NEW}\",operationName:\"User\"}}</script>");
@@ -780,7 +780,7 @@ async fn a_reads_rescan_follows_a_long_chain_of_redirects_and_takes_only_a_redir
 // force `api-anything heal`, which refuses every write.
 #[tokio::test]
 async fn a_stale_writes_next_hint_does_not_point_at_api_anything_heal_which_refuses_writes() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(
         &parse_site(&json!({
             "name": "wst",
@@ -808,7 +808,7 @@ async fn a_stale_writes_next_hint_does_not_point_at_api_anything_heal_which_refu
 
 #[tokio::test]
 async fn logged_out_401_graphql_auth_errors_and_a_login_redirect_are_auth_never_healed() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("auth", json!({}))).unwrap();
     let responses: Vec<Arc<dyn Fn() -> HttpResponse + Send + Sync>> = vec![
         Arc::new(|| json_res(json!({ "errors": [{ "message": "unauthorized" }] }), 401)),
@@ -841,7 +841,7 @@ async fn logged_out_401_graphql_auth_errors_and_a_login_redirect_are_auth_never_
 // never to log in.
 #[tokio::test]
 async fn op_learned_logged_in_jar_now_logged_out_data_missing_the_failure_points_at_login_instead_of_heal_re_add() {
-    let _g = fresh();
+    let _g = fresh().await;
     let mut site = user_site(
         "lo",
         json!({
@@ -871,7 +871,7 @@ async fn op_learned_logged_in_jar_now_logged_out_data_missing_the_failure_points
 
 #[tokio::test]
 async fn rate_limited_on_the_first_try_reported_as_rate_no_heal_one_request() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("rate0", json!({}))).unwrap();
     let r = call(
         "rate0",
@@ -889,7 +889,7 @@ async fn rate_limited_on_the_first_try_reported_as_rate_no_heal_one_request() {
 // limited; that 429 is ignored and the heal runs anyway (fetching the page and up to 40 bundles).
 #[tokio::test]
 async fn rate_limited_during_the_example_args_replay_stop_and_report_rate_do_not_heal() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("rate1", json!({}))).unwrap();
     let n = Arc::new(AtomicUsize::new(0));
     let rot = rotating_handler(|| NEW.to_string());
@@ -916,7 +916,7 @@ async fn rate_limited_during_the_example_args_replay_stop_and_report_rate_do_not
 // "found nothing new", which is false and hides that the candidate was never really checked.
 #[tokio::test]
 async fn rate_limited_while_validating_a_rescan_candidate_class_rate_and_the_reason_does_not_claim_the_rescan_found_nothing() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("rate2", json!({}))).unwrap();
     let rot = rotating_handler(|| NEW.to_string());
     let h = move |url: &str, req: &HttpRequest| {
@@ -932,7 +932,7 @@ async fn rate_limited_while_validating_a_rescan_candidate_class_rate_and_the_rea
 
 #[tokio::test]
 async fn status_404_with_the_param_in_the_path_and_a_volatile_in_the_path_example_replay_separates_not_found_from_drift() {
-    let _g = fresh();
+    let _g = fresh().await;
     let site = parse_site(&json!({
         "name": "nd",
         "baseUrl": "https://t.test",
@@ -959,7 +959,7 @@ async fn status_404_with_the_param_in_the_path_and_a_volatile_in_the_path_exampl
         }
         let u = Url::parse(url).unwrap();
         if let Some(m) = path_re.captures(u.path()) {
-            if &m[1] == build && ["alice", "bob"].contains(&&m[2]) {
+            if m[1] == build && ["alice", "bob"].contains(&&m[2]) {
                 return json_res(json!({ "pageProps": { "user": { "name": &m[2] } } }), 200);
             }
         }
@@ -977,7 +977,7 @@ async fn status_404_with_the_param_in_the_path_and_a_volatile_in_the_path_exampl
 #[tokio::test]
 async fn the_heal_log_carries_no_credential_and_is_0600_the_healed_spec_is_written_whole_with_no_temp_file_left() {
     use std::os::unix::fs::PermissionsExt;
-    let _g = fresh();
+    let _g = fresh().await;
     const SECRET_COOKIE: &str = "s3cr3tAuthTokenValue0123456789";
     const SECRET_CSRF: &str = "csrfValue0123456789abcdef";
     save_site(&user_site(
@@ -1019,7 +1019,7 @@ async fn the_heal_log_carries_no_credential_and_is_0600_the_healed_spec_is_writt
 
 #[tokio::test]
 async fn heal_of_a_bundled_spec_writes_a_user_copy_that_wins_afterwards_the_bundled_file_is_untouched() {
-    let _g = fresh();
+    let _g = fresh().await;
     let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../sites/x.json");
     let before = fs::read(bundled).unwrap();
     let loaded = load_site("x").unwrap().unwrap();
@@ -1086,7 +1086,7 @@ async fn heal_of_a_bundled_spec_writes_a_user_copy_that_wins_afterwards_the_bund
 
 #[tokio::test]
 async fn concurrent_heals_of_one_op_in_one_process_both_answer_correctly_and_leave_one_consistent_spec() {
-    let _g = fresh();
+    let _g = fresh().await;
     save_site(&user_site("conc", json!({}))).unwrap();
     let (a, b) = tokio::join!(
         call("conc", "user", args(json!({"name": "bob"})), tier1(rotating_handler(|| NEW.to_string()))),
@@ -1102,7 +1102,7 @@ async fn concurrent_heals_of_one_op_in_one_process_both_answer_correctly_and_lea
 // a redirected page (locale prefix, trailing-slash or app-path redirects) with a relative src loses its bundle.
 #[tokio::test]
 async fn rescan_resolves_script_paths_against_the_redirected_document_url() {
-    let _g = fresh();
+    let _g = fresh().await;
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
         let path = p.uri.path();
         if path == "/u/bob" {
@@ -1125,7 +1125,7 @@ async fn rescan_resolves_script_paths_against_the_redirected_document_url() {
 
 #[tokio::test]
 async fn rescan_ignores_a_token_that_overlaps_or_is_the_anchor_and_a_token_farther_than_300_chars() {
-    let _g = fresh();
+    let _g = fresh().await;
     let op = user_site("far", json!({})).operations.remove(0);
     let h = |url: &str, _req: &HttpRequest| {
         if url.starts_with("https://t.test/u/") {
@@ -1190,7 +1190,7 @@ async fn query_id_only_in_a_lazily_loaded_chunk_rescan_finds_nothing_recapture_h
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let qid = Arc::new(Mutex::new(OLD.to_string()));
     let q = qid.clone();
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
@@ -1239,7 +1239,7 @@ async fn rotation_while_the_anchor_moved_away_from_the_id_rescan_picks_a_wrong_n
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     const DECOY: &str = "Dd9Ee8Cc7Oo6Yy5Hh4Aa3S";
     let qid = Arc::new(Mutex::new(OLD.to_string()));
     let q = qid.clone();
@@ -1295,7 +1295,7 @@ async fn recapture_of_a_template_that_gained_a_session_header_stores_that_header
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     const TOKEN: &str = "pageToken-5f2a9c1e7b3d";
     let version = Arc::new(AtomicUsize::new(1));
     let v = version.clone();
@@ -1349,7 +1349,7 @@ async fn response_field_renamed_reported_as_drift_with_a_re_add_hint_not_as_inpu
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let renamed = Arc::new(AtomicBool::new(false));
     let rn = renamed.clone();
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
@@ -1388,7 +1388,7 @@ async fn the_trigger_page_now_404s_and_fires_nothing_heal_fails_op_is_stale_next
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let gone = Arc::new(AtomicBool::new(false));
     let page_loads = Arc::new(AtomicUsize::new(0));
     let (g, pl) = (gone.clone(), page_loads.clone());
@@ -1438,7 +1438,7 @@ async fn write_drift_heals_by_recapture_without_the_write_leaving_the_browser_ex
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let qid = Arc::new(Mutex::new(OLD.to_string()));
     let executed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
     let (q, ex) = (qid.clone(), executed.clone());
@@ -1488,7 +1488,7 @@ async fn rate_limited_while_validating_the_rescan_candidate_no_browser_recapture
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let qid = Arc::new(Mutex::new(OLD.to_string()));
     let page_loads = Arc::new(AtomicUsize::new(0));
     let (q, pl) = (qid.clone(), page_loads.clone());
@@ -1547,7 +1547,7 @@ async fn a_heal_in_a_second_process_while_this_process_holds_the_browser_profile
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let version = Arc::new(AtomicUsize::new(1));
     let v = version.clone();
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
@@ -1592,7 +1592,7 @@ async fn a_heal_in_a_second_process_while_this_process_holds_the_browser_profile
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(!stdout.trim().is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
-    let r: Value = serde_json::from_str(stdout.trim().split('\n').last().unwrap()).unwrap();
+    let r: Value = serde_json::from_str(stdout.trim().split('\n').next_back().unwrap()).unwrap();
     assert_eq!(r["ok"], json!(true), "{r}\nstale mark: {}", j(&stale("xp", "search")));
     assert_eq!(stale("xp", "search"), None, "op marked stale: {}", j(&stale("xp", "search")));
     api_anything::browser::close_browser().await;
@@ -1608,7 +1608,7 @@ async fn recapture_with_a_call_arg_that_collides_with_a_constant_q_search_in_api
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let version = Arc::new(AtomicUsize::new(1));
     let v = version.clone();
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
@@ -1655,17 +1655,17 @@ async fn status_404_for_an_unknown_entity_in_a_query_param_input_via_the_example
         eprintln!("{SKIP}");
         return;
     }
-    let _g = fresh();
+    let _g = fresh().await;
     let page_loads = Arc::new(AtomicUsize::new(0));
     let pl = page_loads.clone();
     let known = ["alice", "bobby", "carol"];
     let base = serve(Arc::new(move |p: &Parts, _body: &str| {
         let path = p.uri.path();
-        if path.starts_with("/u/") {
+        if let Some(rest) = path.strip_prefix("/u/") {
             if document_load(p) {
                 pl.fetch_add(1, Ordering::SeqCst);
             }
-            let name = api_anything::util::decode_uri_component(&path[3..]).unwrap_or_default();
+            let name = api_anything::util::decode_uri_component(rest).unwrap_or_default();
             if !known.contains(&name.as_str()) {
                 return send_html("<html><body>This account does not exist</body></html>", 404);
             }

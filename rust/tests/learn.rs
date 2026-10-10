@@ -8,7 +8,11 @@ use common::{args, cookie, enc, ex, exs, j, session};
 use serde_json::{Value, json};
 
 fn x_cookies() -> Vec<StoredCookie> {
-    vec![cookie("ct0", "c0ffee0123456789abcdef", ".x.com"), cookie("auth_token", "a1b2c3d4e5f60718293a", ".x.com"), cookie("gt", "1840000000000000001", ".x.com")]
+    vec![
+        cookie("ct0", "c0ffee0123456789abcdef", ".x.com"),
+        cookie("auth_token", "a1b2c3d4e5f60718293a", ".x.com"),
+        cookie("gt", "1840000000000000001", ".x.com"),
+    ]
 }
 const BEARER: &str = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7";
 
@@ -43,15 +47,28 @@ fn input(exchanges: Vec<Exchange>, examples: Vec<Value>, name: &str, url: &str, 
 
 #[test]
 fn x_like_graphql_get() {
-    let mut i = input(x_exchanges("nasa", "txnAAAAAAAAAAAAAAAAAAAAAAA", 1), vec![json!({"screen_name": "nasa"}), json!({"screen_name": "spacex"})], "getUser", "https://x.com/{screen_name}", true);
+    let mut i = input(
+        x_exchanges("nasa", "txnAAAAAAAAAAAAAAAAAAAAAAA", 1),
+        vec![json!({"screen_name": "nasa"}), json!({"screen_name": "spacex"})],
+        "getUser",
+        "https://x.com/{screen_name}",
+        true,
+    );
     i.exchanges2 = Some(x_exchanges("spacex", "txnBBBBBBBBBBBBBBBBBBBBBBB", 10));
     i.cookies = x_cookies();
     let learned = learn_operation(&i).unwrap();
     let op = &learned.operation;
     assert!(op.request.url.starts_with("https://x.com/i/api/graphql/Gb-d6r0vxPOADdG62OEBpQ/UserByScreenName?"));
     let params: Vec<Value> = op.slots.iter().filter(|s| s.is_param()).map(j).collect();
-    assert_eq!(params, vec![json!({"param": "screen_name", "at": ["query:variables", "json:/screen_name"]}), json!({"param": "screen_name", "at": ["header:referer"], "template": "https://x.com/{screen_name}"})]);
-    let mut refs: Vec<(String, String)> = op.slots.iter().filter(|s| s.is_ref()).map(|s| (s.ref_str().to_string(), s.at.join(","))).collect();
+    assert_eq!(
+        params,
+        vec![
+            json!({"param": "screen_name", "at": ["query:variables", "json:/screen_name"]}),
+            json!({"param": "screen_name", "at": ["header:referer"], "template": "https://x.com/{screen_name}"})
+        ]
+    );
+    let mut refs: Vec<(String, String)> =
+        op.slots.iter().filter(|s| s.is_ref()).map(|s| (s.ref_str().to_string(), s.at.join(","))).collect();
     refs.sort();
     assert_eq!(
         refs,
@@ -62,10 +79,26 @@ fn x_like_graphql_get() {
             ("session:getUser/x-client-transaction-id".to_string(), "header:x-client-transaction-id".to_string()),
         ]
     );
-    assert_eq!(j(&learned.session_values), json!({"getUser/authorization": BEARER, "getUser/x-client-transaction-id": "txnAAAAAAAAAAAAAAAAAAAAAAA"}));
+    assert_eq!(
+        j(&learned.session_values),
+        json!({"getUser/authorization": BEARER, "getUser/x-client-transaction-id": "txnAAAAAAAAAAAAAAAAAAAAAAA"})
+    );
     let mut keys: Vec<&String> = op.request.headers.keys().collect();
     keys.sort();
-    assert_eq!(keys, vec!["accept", "authorization", "referer", "sec-fetch-site", "user-agent", "x-client-transaction-id", "x-csrf-token", "x-guest-token", "x-twitter-auth-type"]);
+    assert_eq!(
+        keys,
+        vec![
+            "accept",
+            "authorization",
+            "referer",
+            "sec-fetch-site",
+            "user-agent",
+            "x-client-transaction-id",
+            "x-csrf-token",
+            "x-guest-token",
+            "x-twitter-auth-type"
+        ]
+    );
     let serialized = serde_json::to_string(op).unwrap();
     for secret in ["c0ffee0123456789abcdef", "a1b2c3d4e5f60718293a", "1840000000000000001", "1Zv7", "txnAAAA"] {
         assert!(!serialized.contains(secret), "spec must not hold {secret}");
@@ -78,10 +111,22 @@ fn x_like_graphql_get() {
     assert_eq!(j(&op.response.format), json!("json"));
     assert_eq!(op.response.extract.as_deref(), Some("data.user.result.legacy"));
     assert_eq!(op.response.shape.as_ref().unwrap()["data.user.result.rest_id"], "string");
-    assert!(!learned.warnings.iter().any(|w| w.contains("nonce") || w.contains("ambiguous") || w.contains("run 2 has")), "{:?}", learned.warnings);
+    assert!(
+        !learned.warnings.iter().any(|w| w.contains("nonce") || w.contains("ambiguous") || w.contains("run 2 has")),
+        "{:?}",
+        learned.warnings
+    );
 
-    let req = build_request(op, &args(json!({"screen_name": "esa"})), &session(x_cookies(), &learned.session_values.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>())).unwrap();
-    assert_eq!(get_at(&req, &["query:variables".to_string(), "json:".to_string()]).unwrap().unwrap(), json!({"screen_name": "esa", "withSafetyMode": true}));
+    let req = build_request(
+        op,
+        &args(json!({"screen_name": "esa"})),
+        &session(x_cookies(), &learned.session_values.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>()),
+    )
+    .unwrap();
+    assert_eq!(
+        get_at(&req, &["query:variables".to_string(), "json:".to_string()]).unwrap().unwrap(),
+        json!({"screen_name": "esa", "withSafetyMode": true})
+    );
     assert_eq!(req.headers["referer"], "https://x.com/esa");
     assert_eq!(req.headers["x-csrf-token"], "c0ffee0123456789abcdef");
     assert_eq!(req.headers["x-guest-token"], "1840000000000000001");
@@ -95,7 +140,10 @@ fn rank_candidates_drops_noise() {
     assert_eq!(ranked.iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 1]);
     assert_eq!(ranked[0].hits, vec!["screen_name"]);
     assert_eq!(ranked[1].resource_type, "document");
-    assert_eq!(rank_candidates(&x_exchanges("nasa", "t", 1), &args(json!({})), RankOptions::default()).iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 1]);
+    assert_eq!(
+        rank_candidates(&x_exchanges("nasa", "t", 1), &args(json!({})), RankOptions::default()).iter().map(|c| c.id).collect::<Vec<_>>(),
+        vec![4, 1]
+    );
 }
 
 #[test]
@@ -110,10 +158,19 @@ fn matches_uses_stable_identity_only() {
 }
 
 fn flights(origin: &str, dest: &str, reqid: &str, id: u64, bgr: &str) -> Exchange {
-    let inner = json!([[null, null, null, "HKUJcc"], [null, null, 1, [
-        [[[[origin, 0]]], [[[dest, 0]]], null, 0, null, null, "2026-11-12"],
-        [[[[dest, 0]]], [[[origin, 0]]], null, 0, null, null, "2026-11-16"]
-    ]]]).to_string();
+    let inner = json!([
+        [null, null, null, "HKUJcc"],
+        [
+            null,
+            null,
+            1,
+            [
+                [[[[origin, 0]]], [[[dest, 0]]], null, 0, null, null, "2026-11-12"],
+                [[[[dest, 0]]], [[[origin, 0]]], null, 0, null, null, "2026-11-16"]
+            ]
+        ]
+    ])
+    .to_string();
     ex(json!({
         "id": id, "resourceType": "xhr",
         "request": {"method": "POST",
@@ -127,7 +184,13 @@ fn flights(origin: &str, dest: &str, reqid: &str, id: u64, bgr: &str) -> Exchang
 
 #[test]
 fn google_flights_triple_encoded_form_params() {
-    let mut i = input(vec![flights("SFO", "JFK", "4521", 1, "[\";u6W4pcHQ-one\"]")], vec![json!({"origin": "SFO", "destination": "JFK"}), json!({"origin": "OAK", "destination": "LAX"})], "search", "https://www.google.com/travel/flights?q={origin}+to+{destination}", true);
+    let mut i = input(
+        vec![flights("SFO", "JFK", "4521", 1, "[\";u6W4pcHQ-one\"]")],
+        vec![json!({"origin": "SFO", "destination": "JFK"}), json!({"origin": "OAK", "destination": "LAX"})],
+        "search",
+        "https://www.google.com/travel/flights?q={origin}+to+{destination}",
+        true,
+    );
     i.exchanges2 = Some(vec![flights("OAK", "LAX", "8837", 2, "[\";u6W4pcHQ-two\"]")]);
     let learned = learn_operation(&i).unwrap();
     let op = &learned.operation;
@@ -140,7 +203,12 @@ fn google_flights_triple_encoded_form_params() {
     assert_eq!(j(&learned.session_values), json!({"search/x-goog-batchexecute-bgr": "[\";u6W4pcHQ-one\"]"}));
     assert_eq!(op.response.xssi_prefix.as_deref(), Some(")]}'"));
 
-    let req = build_request(op, &args(json!({"origin": "SEA", "destination": "BOS"})), &session(vec![], &[("search/x-goog-batchexecute-bgr", "[\";u6W4pcHQ-one\"]")])).unwrap();
+    let req = build_request(
+        op,
+        &args(json!({"origin": "SEA", "destination": "BOS"})),
+        &session(vec![], &[("search/x-goog-batchexecute-bgr", "[\";u6W4pcHQ-one\"]")]),
+    )
+    .unwrap();
     let body = req.body.clone().unwrap();
     let freq = url::form_urlencoded::parse(body.as_bytes()).find(|(k, _)| k == "f.req").unwrap().1.into_owned();
     let outer: Value = serde_json::from_str(&freq).unwrap();
@@ -154,9 +222,19 @@ fn google_flights_triple_encoded_form_params() {
 
 #[test]
 fn high_entropy_value_that_changes_without_an_arg_change_is_a_nonce() {
-    let e = |q: &str, sig: &str, id: u64| ex(json!({"id": id, "resourceType": "fetch", "request": {"method": "GET", "url": format!("https://shop.test/api/search?q={q}&sig={sig}"), "headers": {}},
-        "response": {"status": 200, "headers": {}, "contentType": "application/json", "body": format!("{{\"items\":[{{\"name\":\"{q} one\"}},{{\"name\":\"{q} two\"}}]}}")}}));
-    let mut i = input(vec![e("kettle", "f3a9c1d2e4b5a6c7", 1)], vec![json!({"q": "kettle"}), json!({"q": "toaster"})], "search", "https://shop.test/?q={q}", true);
+    let e = |q: &str, sig: &str, id: u64| {
+        ex(
+            json!({"id": id, "resourceType": "fetch", "request": {"method": "GET", "url": format!("https://shop.test/api/search?q={q}&sig={sig}"), "headers": {}},
+        "response": {"status": 200, "headers": {}, "contentType": "application/json", "body": format!("{{\"items\":[{{\"name\":\"{q} one\"}},{{\"name\":\"{q} two\"}}]}}")}}),
+        )
+    };
+    let mut i = input(
+        vec![e("kettle", "f3a9c1d2e4b5a6c7", 1)],
+        vec![json!({"q": "kettle"}), json!({"q": "toaster"})],
+        "search",
+        "https://shop.test/?q={q}",
+        true,
+    );
     i.exchanges2 = Some(vec![e("toaster", "0b1c2d3e4f5a6b7c", 2)]);
     let learned = learn_operation(&i).unwrap();
     assert_eq!(learned.operation.min_tier, 3);
@@ -177,10 +255,18 @@ fn linkedin_style_quoted_jsessionid() {
         true,
     );
     let op = learn_operation(&i).unwrap().operation;
-    assert_eq!(j(op.slots.iter().find(|s| s.is_ref()).unwrap()), json!({"ref": "cookie:JSESSIONID", "transform": "strip-quotes", "at": ["header:csrf-token"]}));
-    assert_eq!(j(&op.slots[0]), json!({"param": "keywords", "at": ["query:variables"], "template": "(start:0,query:(keywords:{keywords}))"}));
+    assert_eq!(
+        j(op.slots.iter().find(|s| s.is_ref()).unwrap()),
+        json!({"ref": "cookie:JSESSIONID", "transform": "strip-quotes", "at": ["header:csrf-token"]})
+    );
+    assert_eq!(
+        j(&op.slots[0]),
+        json!({"param": "keywords", "at": ["query:variables"], "template": "(start:0,query:(keywords:{keywords}))"})
+    );
     assert_eq!(op.request.headers["csrf-token"], "");
-    let req = build_request(&op, &args(json!({"keywords": "zig"})), &session(vec![cookie("JSESSIONID", "\"ajax:1\"", ".linkedin.com")], &[])).unwrap();
+    let req =
+        build_request(&op, &args(json!({"keywords": "zig"})), &session(vec![cookie("JSESSIONID", "\"ajax:1\"", ".linkedin.com")], &[]))
+            .unwrap();
     assert!(req.url.contains("variables=(start:0,query:(keywords:zig))&queryId="), "{}", req.url);
     assert_eq!(req.headers["csrf-token"], "ajax:1");
 }
@@ -188,7 +274,10 @@ fn linkedin_style_quoted_jsessionid() {
 #[test]
 fn instagram_style_form_post() {
     let variables = "{\"first\":12345,\"username\":\"nasa\",\"id\":2085462611575857621}";
-    let body = format!("av=0&__user=0&fb_api_req_friendly_name=PolarisProfilePostsTabContentQuery&variables={}&doc_id=27553725110923321", enc(variables));
+    let body = format!(
+        "av=0&__user=0&fb_api_req_friendly_name=PolarisProfilePostsTabContentQuery&variables={}&doc_id=27553725110923321",
+        enc(variables)
+    );
     let i = input(
         exs(json!([{"id": 7, "resourceType": "xhr", "request": {"method": "POST", "url": "https://www.instagram.com/api/graphql",
             "headers": {"content-type": "application/x-www-form-urlencoded", "x-ig-app-id": "936619743392459", "x-fb-lsd": "AVqbxe3J_YA"}, "body": body},
@@ -199,12 +288,19 @@ fn instagram_style_form_post() {
         true,
     );
     let op = learn_operation(&i).unwrap().operation;
-    assert_eq!(j(&op.volatile), json!([{"at": ["form:doc_id"], "shape": {"charset": "digits", "length": 17}, "anchor": "PolarisProfilePostsTabContentQuery"}]));
-    assert_eq!(j(&op.matcher), json!({"method": "POST", "host": "www.instagram.com", "path": "/api/graphql", "operationName": "PolarisProfilePostsTabContentQuery"}));
+    assert_eq!(
+        j(&op.volatile),
+        json!([{"at": ["form:doc_id"], "shape": {"charset": "digits", "length": 17}, "anchor": "PolarisProfilePostsTabContentQuery"}])
+    );
+    assert_eq!(
+        j(&op.matcher),
+        json!({"method": "POST", "host": "www.instagram.com", "path": "/api/graphql", "operationName": "PolarisProfilePostsTabContentQuery"})
+    );
     let types: Vec<(String, String)> = op.params.iter().map(|p| (p.name.clone(), p.kind.name().to_string())).collect();
     assert_eq!(types, vec![("username".into(), "string".into()), ("first".into(), "number".into()), ("id".into(), "number".into())]);
     assert_eq!(op.request.headers["x-ig-app-id"], "936619743392459");
-    let req = build_request(&op, &args(json!({"username": "esa", "first": "12", "id": "1999999999999999999"})), &session(vec![], &[])).unwrap();
+    let req =
+        build_request(&op, &args(json!({"username": "esa", "first": "12", "id": "1999999999999999999"})), &session(vec![], &[])).unwrap();
     let body = req.body.unwrap();
     let vars = url::form_urlencoded::parse(body.as_bytes()).find(|(k, _)| k == "variables").unwrap().1.into_owned();
     assert_eq!(vars, "{\"first\":12,\"username\":\"esa\",\"id\":1999999999999999999}");
@@ -261,8 +357,14 @@ fn example_validation_and_pick_errors() {
 fn per_session_form_tokens_become_session_refs_and_a_public_header_can_stay_literal() {
     const AT: &str = "AJpMio3qL0x-Vw8nZ2rT9kYb4HsE:1727430000000";
     const DTSG: &str = "NAcNq8Yx2b3LmPq:17:1727430000";
-    let body = format!("f.req={}&at={}&fb_dtsg={}&", enc(&json!([[["rpc1", json!(["paris"]).to_string(), null, "generic"]]]).to_string()), enc(AT), enc(DTSG));
-    let exchanges = exs(json!([{"id": 1, "resourceType": "xhr", "request": {"method": "POST", "url": "https://www.google.test/_/rpc?rpcids=rpc1",
+    let body = format!(
+        "f.req={}&at={}&fb_dtsg={}&",
+        enc(&json!([[["rpc1", json!(["paris"]).to_string(), null, "generic"]]]).to_string()),
+        enc(AT),
+        enc(DTSG)
+    );
+    let exchanges =
+        exs(json!([{"id": 1, "resourceType": "xhr", "request": {"method": "POST", "url": "https://www.google.test/_/rpc?rpcids=rpc1",
         "headers": {"content-type": "application/x-www-form-urlencoded", "authorization": BEARER}, "body": body},
         "response": {"status": 200, "headers": {}, "contentType": "application/json", "body": "[[\"paris\",1]]"}}]));
     let base = || input(exchanges.clone(), vec![json!({"city": "paris"})], "s", "https://www.google.test/s?q={city}", true);
@@ -310,7 +412,8 @@ fn a_learned_template_keeps_the_leafs_own_name_text() {
         true,
     ))
     .unwrap();
-    let out = build_request(&l.operation, &args(json!({"owner": "torvalds", "name": "linux"})), &session(vec![], &[])).unwrap().body.unwrap();
+    let out =
+        build_request(&l.operation, &args(json!({"owner": "torvalds", "name": "linux"})), &session(vec![], &[])).unwrap().body.unwrap();
     let parsed: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(parsed["query"], json!("query{repository(owner:\"torvalds\",name:\"linux\"){name}}"));
 }
@@ -322,17 +425,25 @@ fn telemetry_that_logs_the_page_url_does_not_count() {
         if let Some(b) = body {
             req["body"] = json!(b);
         }
-        ex(json!({"id": id, "resourceType": "xhr", "request": req, "response": {"status": 200, "headers": {}, "contentType": "application/json", "body": "{}"}}))
+        ex(
+            json!({"id": id, "resourceType": "xhr", "request": req, "response": {"status": 200, "headers": {}, "contentType": "application/json", "body": "{}"}}),
+        )
     };
     let ranked = rank_candidates(
-        &[e(1, "https://x.test/1.1/viewer_context.json", Some(&json!({"page": "https://x.test/nasa"}).to_string())), e(2, "https://api.x.test/User?screen_name=nasa", None)],
+        &[
+            e(1, "https://x.test/1.1/viewer_context.json", Some(&json!({"page": "https://x.test/nasa"}).to_string())),
+            e(2, "https://api.x.test/User?screen_name=nasa", None),
+        ],
         &args(json!({"screen_name": "nasa"})),
         RankOptions::default(),
     );
     assert_eq!(ranked.iter().map(|c| (c.id, c.hits.clone())).collect::<Vec<_>>(), vec![(2, vec!["screen_name".to_string()]), (1, vec![])]);
     let mut video = e(3, "https://video.test/seg-1.m4s?nasa", None);
     video.response = Some(serde_json::from_value(json!({"status": 200, "headers": {}, "contentType": "video/mp4", "body": "x"})).unwrap());
-    assert!(rank_candidates(&[video], &args(json!({"screen_name": "nasa"})), RankOptions::default()).is_empty(), "media fetched by XHR is noise");
+    assert!(
+        rank_candidates(&[video], &args(json!({"screen_name": "nasa"})), RankOptions::default()).is_empty(),
+        "media fetched by XHR is noise"
+    );
 }
 
 #[test]

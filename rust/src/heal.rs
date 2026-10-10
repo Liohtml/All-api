@@ -7,10 +7,13 @@ use crate::extract::{cap_output, extract};
 use crate::http::{HttpRequest, MAX_REDIRECTS, SendOptions, SharedFetcher, build_request, default_fetcher, is_redirect, own_match, send};
 use crate::learn::{ASSET_EXT, Args, LearnInput, Learned, capture_pages, check_examples, hash_like, learn_operation, matches};
 use crate::secrets::scan_secrets;
-use crate::session::{Session, cookie_header_for, home, load_session, merge_capture, parse_cookie_header, prune_captures, read_json, safe_name, site_of, write_private};
+use crate::session::{
+    Session, cookie_header_for, home, load_session, merge_capture, parse_cookie_header, prune_captures, read_json, safe_name, site_of,
+    write_private,
+};
 use crate::spec::{Escape, Format, Match, Operation, ResponseSpec, Site, Slot, Volatile};
 use crate::store::{Strategy, append_heal, clear_stale, load_site, remember_tier, update_site};
-use crate::types::{CaptureResult, Exchange, StoredCookie, StepAction, TriggerStep};
+use crate::types::{CaptureResult, Exchange, StepAction, StoredCookie, TriggerStep};
 use crate::util::{as_text, decode_loose, decode_uri_component, encode_uri_component, iso_now, json, json_unquote, now_ms, parse_url, re};
 use anyhow::{Result, anyhow, bail};
 use futures_util::future::BoxFuture;
@@ -51,8 +54,7 @@ impl Attempt {
     }
 }
 
-pub const PROFILE_HINT: &str =
-    "another api-anything process (an MCP server?) holds the browser profile; it lets go after a few seconds idle: wait, or stop it, then retry once";
+pub const PROFILE_HINT: &str = "another api-anything process (an MCP server?) holds the browser profile; it lets go after a few seconds idle: wait, or stop it, then retry once";
 
 /// Fill `{param}` in a trigger. URL parts are percent-encoded; step values are typed as given.
 pub fn fill_trigger(t: &crate::spec::Trigger, args: &Args) -> crate::spec::Trigger {
@@ -237,7 +239,11 @@ fn carries_args(op: &Operation, e: &Exchange, args: &Args) -> bool {
         let slots: Vec<&Slot> = op
             .slots
             .iter()
-            .filter(|s| (s.param.as_deref() == Some(p.name.as_str()) || s.template.as_ref().map(|t| t.contains(&format!("{{{}}}", p.name))).unwrap_or(false)) && !NOT_EVIDENCE.is_match(&s.at[0]))
+            .filter(|s| {
+                (s.param.as_deref() == Some(p.name.as_str())
+                    || s.template.as_ref().map(|t| t.contains(&format!("{{{}}}", p.name))).unwrap_or(false))
+                    && !NOT_EVIDENCE.is_match(&s.at[0])
+            })
             .collect();
         !slots.is_empty()
             && slots.iter().all(|s| match (get_at(&e.request, &s.at), get_at(&expected, &s.at)) {
@@ -268,7 +274,8 @@ pub fn login_wall(capture: &CaptureResult, trigger_url: &str) -> Option<String> 
     if f.path() == t.path() {
         return None;
     }
-    let doc = capture.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.as_ref().map(|r| r.body.is_some()).unwrap_or(false));
+    let doc =
+        capture.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.as_ref().map(|r| r.body.is_some()).unwrap_or(false));
     static PASSWORD: LazyLock<regex::Regex> = LazyLock::new(|| re(r#"(?i)type=["']?password"#));
     static LOGIN: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)(log|sign)[-_]?in|/accounts/login|/i/flow/login"));
     let password = doc.map(|d| PASSWORD.is_match(d.body())).unwrap_or(false);
@@ -317,8 +324,24 @@ pub async fn run_op_trigger(site: &str, op: &Operation, args: &Args, intercept: 
 /// A tier-3 result: the site's own request, answered.
 pub fn judge_exchange(op: &Operation, e: &Exchange) -> Option<Attempt> {
     let r = e.response.as_ref()?;
-    let j = judge(op, &Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: Some(e.request.url.clone()) });
-    Some(Attempt { tier: 3, status: Some(r.status), class: j.class, reason: j.reason, missing: j.missing, data: j.data, ..Default::default() })
+    let j = judge(
+        op,
+        &Observed {
+            status: r.status,
+            headers: r.headers.clone(),
+            body: r.body.clone().unwrap_or_default(),
+            url: Some(e.request.url.clone()),
+        },
+    );
+    Some(Attempt {
+        tier: 3,
+        status: Some(r.status),
+        class: j.class,
+        reason: j.reason,
+        missing: j.missing,
+        data: j.data,
+        ..Default::default()
+    })
 }
 
 /* ------------------------------------------------------------ captures */
@@ -360,7 +383,13 @@ fn base36(mut n: u64) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn save_capture(url: &str, steps: Option<&Vec<TriggerStep>>, soft_from: Option<&str>, write: bool, r: CaptureResult) -> Result<CaptureFile> {
+fn save_capture(
+    url: &str,
+    steps: Option<&Vec<TriggerStep>>,
+    soft_from: Option<&str>,
+    write: bool,
+    r: CaptureResult,
+) -> Result<CaptureFile> {
     let mut id = format!("c{}", base36(now_ms() as u64));
     {
         let mut last = LAST_ID.lock().unwrap();
@@ -370,7 +399,15 @@ fn save_capture(url: &str, steps: Option<&Vec<TriggerStep>>, soft_from: Option<&
         }
         *last = id.clone();
     }
-    let file = CaptureFile { id: id.clone(), at: iso_now(), url: url.to_string(), steps: steps.cloned(), soft_from: soft_from.map(|s| s.to_string()), write, result: r };
+    let file = CaptureFile {
+        id: id.clone(),
+        at: iso_now(),
+        url: url.to_string(),
+        steps: steps.cloned(),
+        soft_from: soft_from.map(|s| s.to_string()),
+        write,
+        result: r,
+    };
     write_private(&capture_file(&id)?, &json(&serde_json::to_value(&file)?))?;
     prune_captures(now_ms());
     Ok(file)
@@ -510,7 +547,13 @@ pub fn templatize_url(url: &str, args: &Args) -> String {
         if pairs.as_ref().map(|ps| ps.iter().any(|p| in_query(p))).unwrap_or(false) || segs.iter().any(|s| in_path(s)) {
             pairs = pairs.map(|ps| {
                 ps.into_iter()
-                    .map(|p| if in_query(&p) && (!named || key_of(&p) == k.to_lowercase()) { format!("{}={hole}", &p[..p.find('=').unwrap_or(0)]) } else { p })
+                    .map(|p| {
+                        if in_query(&p) && (!named || key_of(&p) == k.to_lowercase()) {
+                            format!("{}={hole}", &p[..p.find('=').unwrap_or(0)])
+                        } else {
+                            p
+                        }
+                    })
                     .collect()
             });
             if !named {
@@ -544,10 +587,19 @@ pub fn capture_trigger(c: &CaptureFile, args: &Args) -> crate::spec::Trigger {
     let step = |s: &TriggerStep| TriggerStep {
         action: s.action,
         selector: s.selector.as_ref().filter(|x| !x.is_empty()).map(|x| templatize(x, args)).or_else(|| s.selector.clone()),
-        value: s.value.as_ref().filter(|x| !x.is_empty()).map(|x| if s.action == StepAction::Goto { templatize_url(x, args) } else { templatize(x, args) }).or_else(|| s.value.clone()),
+        value: s
+            .value
+            .as_ref()
+            .filter(|x| !x.is_empty())
+            .map(|x| if s.action == StepAction::Goto { templatize_url(x, args) } else { templatize(x, args) })
+            .or_else(|| s.value.clone()),
         ms: s.ms,
     };
-    crate::spec::Trigger { url: templatize_url(&c.url, args), soft_from: c.soft_from.clone(), steps: c.steps.as_ref().map(|ss| ss.iter().map(step).collect()) }
+    crate::spec::Trigger {
+        url: templatize_url(&c.url, args),
+        soft_from: c.soft_from.clone(),
+        steps: c.steps.as_ref().map(|ss| ss.iter().map(step).collect()),
+    }
 }
 
 /// The args a trigger has no `{name}` for, in its URL, its soft-navigation page or its steps.
@@ -575,10 +627,19 @@ fn learn_or_explain(site: &str, run: &CaptureResult, input: &LearnInput) -> Resu
             // Only the page's own documents: an ad's or widget's iframe (a reCAPTCHA frame) is not the page.
             let docs: Vec<&Exchange> = run.exchanges.iter().filter(|x| x.resource_type == "document" && x.response.is_some()).collect();
             let own = docs.first().and_then(|d| parse_url(&d.request.url)).map(|u| site_of(u.host_str().unwrap_or("")));
-            let doc = docs.iter().rfind(|x| parse_url(&x.request.url).map(|u| Some(site_of(u.host_str().unwrap_or(""))) == own).unwrap_or(false));
-            let wall = doc.and_then(|d| d.response.as_ref()).and_then(|r| bot_wall(&Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: None }, false, None));
+            let doc =
+                docs.iter().rfind(|x| parse_url(&x.request.url).map(|u| Some(site_of(u.host_str().unwrap_or(""))) == own).unwrap_or(false));
+            let wall = doc.and_then(|d| d.response.as_ref()).and_then(|r| {
+                bot_wall(
+                    &Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: None },
+                    false,
+                    None,
+                )
+            });
             if let Some(wall) = wall {
-                bail!("the page served a bot challenge ({wall}): ask the user to run api-anything login {site} and clear it, then add again (learning said: {e})");
+                bail!(
+                    "the page served a bot challenge ({wall}): ask the user to run api-anything login {site} and clear it, then add again (learning said: {e})"
+                );
             }
             Err(e)
         }
@@ -642,11 +703,26 @@ struct Saved {
 }
 
 /// The end of every add: judge the op on the answer it was learned from, then save it.
-fn save_operation(site: &str, operation: Operation, exchange: Option<&Exchange>, mut warnings: Vec<String>, session: &Session, again: Option<&str>) -> Result<Saved> {
+fn save_operation(
+    site: &str,
+    operation: Operation,
+    exchange: Option<&Exchange>,
+    mut warnings: Vec<String>,
+    session: &Session,
+    again: Option<&str>,
+) -> Result<Saved> {
     let mut preview: Option<Preview> = None;
     if let Some(res) = exchange.and_then(|e| e.response.as_ref().map(|r| (e, r))) {
         let (e, r) = res;
-        let j = judge(&operation, &Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: Some(e.request.url.clone()) });
+        let j = judge(
+            &operation,
+            &Observed {
+                status: r.status,
+                headers: r.headers.clone(),
+                body: r.body.clone().unwrap_or_default(),
+                url: Some(e.request.url.clone()),
+            },
+        );
         if j.class == Class::Ok {
             preview = Some(preview_of(j.data.as_ref()));
         } else if matches!(j.class, Class::Blocked | Class::Auth | Class::Rate) {
@@ -680,7 +756,14 @@ fn save_operation(site: &str, operation: Operation, exchange: Option<&Exchange>,
     let site_name = site.to_string();
     let path = update_site(site, move |current| {
         *r2.lock().unwrap() = current.as_ref().map(|c| c.operations.iter().any(|o| o.name == op_name)).unwrap_or(false);
-        let fresh = Site { name: site_name.clone(), display_name: None, base_url: crate::util::origin_str(&op2.trigger.url).unwrap_or_default(), description: None, login_cookies: None, operations: vec![] };
+        let fresh = Site {
+            name: site_name.clone(),
+            display_name: None,
+            base_url: crate::util::origin_str(&op2.trigger.url).unwrap_or_default(),
+            description: None,
+            login_cookies: None,
+            operations: vec![],
+        };
         Ok(put_operation(&current.unwrap_or(fresh), op2))
     })?;
     clear_stale(site, &operation.name);
@@ -728,7 +811,11 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     // Before any browser run: learned as a read, a write is sent while learning it, and then on every call.
     if let Some(o) = &old {
         if !o.read_only && !input.write {
-            bail!("{} is a write: learning it again needs --write{}", input.op, if input.from.is_some() { ", and a capture made with --write" } else { "" });
+            bail!(
+                "{} is a write: learning it again needs --write{}",
+                input.op,
+                if input.from.is_some() { ", and a capture made with --write" } else { "" }
+            );
         }
     }
     // before any browser run: a too-short or duplicate example would only fail after it
@@ -762,7 +849,9 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
         captures.push(saved1.id.clone());
         let r1 = saved1.result;
         if let Some(wall) = login_wall(&r1, &url1) {
-            bail!("the trigger landed on a sign-in page ({wall}): the site needs an account. Ask the user to run: api-anything login {site_name}; then add again");
+            bail!(
+                "the trigger landed on a sign-in page ({wall}): the site needs an account. Ask the user to run: api-anything login {site_name}; then add again"
+            );
         }
         run1 = r1;
         let (saved2, _) = run(ex2.clone().unwrap_or_else(|| ex1.clone())).await?;
@@ -776,7 +865,13 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
         _ => flags,
     };
     let spec = ResponseSpec {
-        format: if r.html.is_some() { Format::Html } else if r.embedded.is_some() { Format::Embedded } else { Format::Json },
+        format: if r.html.is_some() {
+            Format::Html
+        } else if r.embedded.is_some() {
+            Format::Embedded
+        } else {
+            Format::Json
+        },
         extract: r.extract.clone(),
         pick: r.pick.clone(),
         html: r.html.clone(),
@@ -790,7 +885,13 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     if let Some(s) = run1.storage.clone() {
         storage.extend(s);
     }
-    let mut li = LearnInput::new(run1.exchanges.clone(), if run2.is_some() { vec![ex1.clone(), ex2.clone().unwrap_or_else(|| ex1.clone())] } else { vec![ex1.clone()] }, &input.op, trigger.clone(), !input.write);
+    let mut li = LearnInput::new(
+        run1.exchanges.clone(),
+        if run2.is_some() { vec![ex1.clone(), ex2.clone().unwrap_or_else(|| ex1.clone())] } else { vec![ex1.clone()] },
+        &input.op,
+        trigger.clone(),
+        !input.write,
+    );
     li.pages = Some(capture_pages(&run1));
     li.exchanges2 = run2.as_ref().map(|x| x.exchanges.clone());
     li.cookies = run2.as_ref().unwrap_or(&run1).cookies.clone();
@@ -824,7 +925,12 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     };
     // A stored value may sit in the capture by chance: bound there, the param would fill the wrong place from then on.
     let places = |o: &Operation| {
-        let mut v: Vec<String> = o.slots.iter().filter(|s| s.is_param()).map(|s| format!("{} at {}", s.param.as_deref().unwrap_or(""), s.at.join(" > "))).collect();
+        let mut v: Vec<String> = o
+            .slots
+            .iter()
+            .filter(|s| s.is_param())
+            .map(|s| format!("{} at {}", s.param.as_deref().unwrap_or(""), s.at.join(" > ")))
+            .collect();
         v.sort();
         v.join("; ")
     };
@@ -843,7 +949,11 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     // What a --write capture aborted, its guard stopped as a write: that is the evidence, not the method.
     if let Some(f) = &input.from {
         if !input.write && learned.exchange.aborted && f.capture.write {
-            bail!("capture {} was made with --write and intercepted request {} as a write: learning it needs --write", f.capture.id, learned.exchange.id);
+            bail!(
+                "capture {} was made with --write and intercepted request {} as a write: learning it needs --write",
+                f.capture.id,
+                learned.exchange.id
+            );
         }
     }
     if let (Some(c2), Some(e2)) = (&input.from2, &learned.exchange2) {
@@ -853,7 +963,10 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     }
     let mut warnings = recipe_warnings(learned.warnings.clone(), &r);
     if !missing.is_empty() {
-        warnings.push(format!("the trigger has no {{{}}}: tier-3 runs and heals would load the example's page; put the param in --trigger", missing.join("}, {")));
+        warnings.push(format!(
+            "the trigger has no {{{}}}: tier-3 runs and heals would load the example's page; put the param in --trigger",
+            missing.join("}, {")
+        ));
     }
     // Learned again with nothing new said about it, an op keeps what this one capture cannot tell: its
     // description, and a tier an earlier two-run diff raised (--description "" clears the first).
@@ -873,10 +986,15 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     if operation.min_tier == 3 && operation.read_only && run2.is_some() {
         let opts = SendOptions { site: site_name.clone(), fetcher: input.fetcher.clone(), timeout_ms: None, min_interval_ms: None };
         if let Ok(sent) = send(&operation, ex2.as_ref().unwrap_or(&ex1), &session, &opts).await {
-            let j = judge(&operation, &Observed { status: sent.status, headers: sent.headers.clone(), body: sent.body.clone(), url: Some(sent.url.clone()) });
+            let j = judge(
+                &operation,
+                &Observed { status: sent.status, headers: sent.headers.clone(), body: sent.body.clone(), url: Some(sent.url.clone()) },
+            );
             if j.class == Class::Ok {
                 operation.min_tier = 1;
-                warnings.push("...but run 1's template replays fine with example 2's args, so those values are session-scoped: minTier 1".to_string());
+                warnings.push(
+                    "...but run 1's template replays fine with example 2's args, so those values are session-scoped: minTier 1".to_string(),
+                );
             }
         }
     }
@@ -884,7 +1002,14 @@ pub async fn add_operation(input: AddInput) -> Result<AddResult> {
     let again = captures.first().cloned().or_else(|| input.from.as_ref().map(|f| f.capture.id.clone()));
     let saved = save_operation(&site_name, operation, Some(&learned.exchange), warnings, &session, again.as_deref())?;
     remember_tier(&site_name, &saved.operation.name, None);
-    Ok(AddResult { operation: saved.operation, warnings: saved.warnings, path: saved.path, captures, preview: saved.preview, replaced: saved.replaced })
+    Ok(AddResult {
+        operation: saved.operation,
+        warnings: saved.warnings,
+        path: saved.path,
+        captures,
+        preview: saved.preview,
+        replaced: saved.replaced,
+    })
 }
 
 /* ---------------------------------------------------------------- rescan */
@@ -941,7 +1066,8 @@ fn nearest_token(texts: &[String], v: &Volatile, strict: bool) -> Option<String>
         for a in anchor_re.find_iter(text).flatten() {
             let i = a.start();
             let anchor_end = a.end();
-            let from = text[..i].char_indices().rev().nth(NEAR.saturating_sub(1)).map(|(k, _)| k).unwrap_or(0).max(i.saturating_sub(NEAR * 4));
+            let from =
+                text[..i].char_indices().rev().nth(NEAR.saturating_sub(1)).map(|(k, _)| k).unwrap_or(0).max(i.saturating_sub(NEAR * 4));
             let from = floor_char(text, from);
             let to = ceil_char(text, (anchor_end + NEAR).min(text.len()));
             let before = text[..i].chars().last().map(|c| c.is_whitespace()).unwrap_or(false);
@@ -961,7 +1087,8 @@ fn nearest_token(texts: &[String], v: &Volatile, strict: bool) -> Option<String>
             }
         }
     }
-    let code: Vec<&Found> = if found.iter().any(|f| !f.prose) { found.iter().filter(|f| !f.prose).collect() } else { found.iter().collect() };
+    let code: Vec<&Found> =
+        if found.iter().any(|f| !f.prose) { found.iter().filter(|f| !f.prose).collect() } else { found.iter().collect() };
     let pool: Vec<&Found> = if code.iter().any(|f| f.same) {
         code.into_iter().filter(|f| f.same).collect()
     } else if strict {
@@ -993,7 +1120,12 @@ fn ceil_char(s: &str, mut i: usize) -> usize {
 
 /// A page's text and where it ended up, for the rescan. Redirects are taken by hand so that `off`
 /// is asked about every address before it is fetched: one it rules out is not fetched.
-async fn fetch_text(mut url: String, headers: &dyn Fn(&str) -> crate::types::Headers, fetcher: &SharedFetcher, off: &dyn Fn(&str) -> bool) -> (String, String) {
+async fn fetch_text(
+    mut url: String,
+    headers: &dyn Fn(&str) -> crate::types::Headers,
+    fetcher: &SharedFetcher,
+    off: &dyn Fn(&str) -> bool,
+) -> (String, String) {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(15_000);
     let mut hops = 0;
     while hops <= MAX_REDIRECTS && !off(&url) {
@@ -1005,7 +1137,11 @@ async fn fetch_text(mut url: String, headers: &dyn Fn(&str) -> crate::types::Hea
         let Ok(Ok(r)) = tokio::time::timeout(left, fetcher.fetch(req, left)).await else { break };
         let location = if is_redirect(r.status) { r.headers.get("location").cloned() } else { None };
         let Some(location) = location.filter(|l| !l.is_empty()) else {
-            let text = if (200..300).contains(&r.status) { crate::http::decode_body(&r.body, r.headers.get("content-type").map(|s| s.as_str()).unwrap_or("")) } else { String::new() };
+            let text = if (200..300).contains(&r.status) {
+                crate::http::decode_body(&r.body, r.headers.get("content-type").map(|s| s.as_str()).unwrap_or(""))
+            } else {
+                String::new()
+            };
             return (text, url);
         };
         url = crate::util::resolve_url(&location, &url).unwrap_or(location);
@@ -1123,8 +1259,15 @@ fn summarize(a: &Operation, b: &Operation) -> String {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum HealResult {
-    Healed { strategy: Strategy, operation: Operation, attempt: Attempt },
-    Identical { reason: String, fallback: Option<Attempt> },
+    Healed {
+        strategy: Strategy,
+        operation: Operation,
+        attempt: Attempt,
+    },
+    Identical {
+        reason: String,
+        fallback: Option<Attempt>,
+    },
     Failed {
         reason: String,
         /// the last validation replay, if one ran
@@ -1162,7 +1305,12 @@ fn save_healed(site: &str, op: Operation, strategy: Strategy, diff: String, atte
     let session = load_session(site).unwrap_or_default();
     let secrets = scan_secrets(&serde_json::to_value(&op).unwrap_or(Value::Null), &session, &allowed).secrets;
     if !secrets.is_empty() {
-        return HealResult::Failed { reason: format!("refusing to save a healed spec containing a credential: {}", secrets.join("; ")), attempt: None, fallback: None, transient: false };
+        return HealResult::Failed {
+            reason: format!("refusing to save a healed spec containing a credential: {}", secrets.join("; ")),
+            attempt: None,
+            fallback: None,
+            transient: false,
+        };
     }
     let op2 = op.clone();
     let site2 = site.to_string();
@@ -1202,7 +1350,8 @@ pub async fn heal_operation(site: &str, op: &Operation, args: &Args, o: HealOpti
     let call_args = crate::http::with_defaults(op, args);
 
     let scanned = rescan(site, op, &call_args, o.fetcher.clone()).await.ok().flatten();
-    let swapped = |reason: &str| format!("rescan swapped {}, replay said {reason}", scanned.as_ref().map(|s| s.diff.clone()).unwrap_or_default());
+    let swapped =
+        |reason: &str| format!("rescan swapped {}, replay said {reason}", scanned.as_ref().map(|s| s.diff.clone()).unwrap_or_default());
     if let Some(s) = &scanned {
         budget -= 1;
         let a = (o.validate)(s.operation.clone()).await;
@@ -1224,10 +1373,20 @@ pub async fn heal_operation(site: &str, op: &Operation, args: &Args, o: HealOpti
         None => "rescan found nothing new".to_string(),
     };
     if !o.browser {
-        return HealResult::Failed { attempt: last, reason: format!("{tried}; recapture needs the browser (maxTier 1)"), fallback: None, transient: false };
+        return HealResult::Failed {
+            attempt: last,
+            reason: format!("{tried}; recapture needs the browser (maxTier 1)"),
+            fallback: None,
+            transient: false,
+        };
     }
     if !chrome_available() {
-        return HealResult::Failed { attempt: last, reason: format!("{tried}; recapture needs Google Chrome"), fallback: None, transient: false };
+        return HealResult::Failed {
+            attempt: last,
+            reason: format!("{tried}; recapture needs Google Chrome"),
+            fallback: None,
+            transient: false,
+        };
     }
 
     let examples_raw: Args = op.params.iter().filter_map(|p| p.example.clone().map(|e| (p.name.clone(), e))).collect();
@@ -1254,7 +1413,12 @@ pub async fn heal_operation(site: &str, op: &Operation, args: &Args, o: HealOpti
         }
     }
     if !run.capture.exchanges.iter().any(|e| matches(&op.matcher, &e.request)) {
-        return HealResult::Failed { attempt: last, reason: format!("the trigger fired no request matching {}", json(&serde_json::to_value(&op.matcher).unwrap_or(Value::Null))), fallback: None, transient: false };
+        return HealResult::Failed {
+            attempt: last,
+            reason: format!("the trigger fired no request matching {}", json(&serde_json::to_value(&op.matcher).unwrap_or(Value::Null))),
+            fallback: None,
+            transient: false,
+        };
     }
     let seen = run.matched.as_ref().and_then(|m| judge_exchange(op, m));
     if let Some(s) = &seen {
@@ -1319,15 +1483,28 @@ pub async fn heal_operation(site: &str, op: &Operation, args: &Args, o: HealOpti
         }
     }
     if !lost.is_empty() {
-        return HealResult::Failed { attempt: last, fallback, reason: format!("re-learning found no place for {}; not saved", lost.join(", ")), transient: false };
+        return HealResult::Failed {
+            attempt: last,
+            fallback,
+            reason: format!("re-learning found no place for {}; not saved", lost.join(", ")),
+            transient: false,
+        };
     }
     // A moved parameter can heal; an inferred suffix/prefix is not proof of the caller's meaning.
     static HOLE: LazyLock<regex::Regex> = LazyLock::new(|| re(r"\{(?:cookie|session):[^{}]+\}"));
-    let encoding = |s: &Slot| json(&serde_json::json!([s.template.as_ref().map(|t| HOLE.replace_all(t, "{credential}").into_owned()), s.escape]));
+    let encoding =
+        |s: &Slot| json(&serde_json::json!([s.template.as_ref().map(|t| HOLE.replace_all(t, "{credential}").into_owned()), s.escape]));
     static NOT_EVIDENCE: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)^header:(referer|origin|cookie)$"));
-    let changed = candidate.slots.iter().find(|s| s.is_param() && !NOT_EVIDENCE.is_match(&s.at[0]) && !op.slots.iter().any(|old| old.param == s.param && encoding(old) == encoding(s)));
+    let changed = candidate.slots.iter().find(|s| {
+        s.is_param() && !NOT_EVIDENCE.is_match(&s.at[0]) && !op.slots.iter().any(|old| old.param == s.param && encoding(old) == encoding(s))
+    });
     if let Some(c) = changed {
-        return HealResult::Failed { attempt: last, fallback, reason: format!("re-learning changed the encoding of {}; re-add the operation to confirm it", c.param.as_deref().unwrap_or("")), transient: false };
+        return HealResult::Failed {
+            attempt: last,
+            fallback,
+            reason: format!("re-learning changed the encoding of {}; re-add the operation to confirm it", c.param.as_deref().unwrap_or("")),
+            transient: false,
+        };
     }
     if template(&candidate, &learn_args) == template(op, &learn_args) {
         return HealResult::Identical { fallback, reason: "re-learning produced a byte-identical template".to_string() };

@@ -19,12 +19,12 @@ use futures_util::future::BoxFuture;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 static HOME: LazyLock<Home> = LazyLock::new(Home::new);
 /// The TS tests share one search server state (`version`, `pageLoads`) and run one after the other.
-static LOCK: Mutex<()> = Mutex::new(());
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static VERSION: Mutex<&str> = Mutex::new("v1");
 static PAGE_LOADS: AtomicUsize = AtomicUsize::new(0);
 
@@ -40,9 +40,9 @@ fn chrome() -> bool {
 
 const SKIP: &str = "Google Chrome not installed: skipped";
 
-fn start() -> MutexGuard<'static, ()> {
+async fn start() -> tokio::sync::MutexGuard<'static, ()> {
     let _ = &*HOME;
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    LOCK.lock().await
 }
 
 fn fast() -> CallOptions {
@@ -139,7 +139,7 @@ async fn recapture_with_an_omitted_optional_arg_keeps_every_params_slot_defaults
         eprintln!("{SKIP}");
         return;
     }
-    let _g = start();
+    let _g = start().await;
     let base = search().await;
     set_version("v1");
     add_operation(add_search("s1", &base)).await.unwrap();
@@ -164,7 +164,7 @@ async fn recapture_with_a_short_arg_page_2_learns_from_the_ops_examples_instead(
         eprintln!("{SKIP}");
         return;
     }
-    let _g = start();
+    let _g = start().await;
     let base = search().await;
     set_version("v1");
     add_operation(add_search("s2", &base)).await.unwrap();
@@ -181,7 +181,7 @@ async fn a_failed_heal_marks_the_op_stale_so_the_next_call_skips_the_browser() {
         eprintln!("{SKIP}");
         return;
     }
-    let _g = start();
+    let _g = start().await;
     let base = search().await;
     set_version("v2");
     add_operation(add_search("s3", &base)).await.unwrap();
@@ -206,7 +206,7 @@ async fn a_tier_3_ops_heal_candidate_is_validated_by_replaying_it_not_by_rerunni
         eprintln!("{SKIP}");
         return;
     }
-    let _g = start();
+    let _g = start().await;
     const QID: &str = "Aa1Bb2Cc3Dd4Ee5Ff6Gg7H";
     const DECOY: &str = "Qq1Rr2Ss3Tt4Uu5Vv6Ww7X";
     let api_paths: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
@@ -272,7 +272,7 @@ async fn call_never_throws_when_the_heals_browser_run_fails() {
         eprintln!("{SKIP}");
         return;
     }
-    let _g = start();
+    let _g = start().await;
     save_site(
         &parse_site(&json!({
             "name": "d",

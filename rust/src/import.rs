@@ -119,25 +119,55 @@ pub fn browser_roots() -> Result<Vec<BrowserRoot>> {
         for (name, rel) in CHROMIUM_MAC {
             let root = support.join(rel);
             if root.exists() {
-                out.push(BrowserRoot { name: name.into(), family: Family::Chromium, root: root.display().to_string(), password: None, iterations: None });
+                out.push(BrowserRoot {
+                    name: name.into(),
+                    family: Family::Chromium,
+                    root: root.display().to_string(),
+                    password: None,
+                    iterations: None,
+                });
             }
         }
         let ff = support.join("Firefox").join("Profiles");
         if ff.exists() {
-            out.push(BrowserRoot { name: "Firefox".into(), family: Family::Firefox, root: ff.display().to_string(), password: None, iterations: None });
+            out.push(BrowserRoot {
+                name: "Firefox".into(),
+                family: Family::Firefox,
+                root: ff.display().to_string(),
+                password: None,
+                iterations: None,
+            });
         }
     } else if cfg!(target_os = "linux") {
-        let config = std::env::var("XDG_CONFIG_HOME").ok().filter(|c| !c.is_empty()).map(PathBuf::from).unwrap_or_else(|| Path::new(&home).join(".config"));
-        for (name, rel) in [("Chrome", "google-chrome"), ("Chromium", "chromium"), ("Brave", "BraveSoftware/Brave-Browser"), ("Edge", "microsoft-edge")] {
+        let config = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|c| !c.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(&home).join(".config"));
+        for (name, rel) in
+            [("Chrome", "google-chrome"), ("Chromium", "chromium"), ("Brave", "BraveSoftware/Brave-Browser"), ("Edge", "microsoft-edge")]
+        {
             let root = config.join(rel);
             // Linux v10 is AES under a fixed password; v11 (secret-tool) is not attempted here.
             if root.exists() {
-                out.push(BrowserRoot { name: name.into(), family: Family::Chromium, root: root.display().to_string(), password: Some("peanuts".into()), iterations: Some(1) });
+                out.push(BrowserRoot {
+                    name: name.into(),
+                    family: Family::Chromium,
+                    root: root.display().to_string(),
+                    password: Some("peanuts".into()),
+                    iterations: Some(1),
+                });
             }
         }
         let ff = Path::new(&home).join(".mozilla").join("firefox");
         if ff.exists() {
-            out.push(BrowserRoot { name: "Firefox".into(), family: Family::Firefox, root: ff.display().to_string(), password: None, iterations: None });
+            out.push(BrowserRoot {
+                name: "Firefox".into(),
+                family: Family::Firefox,
+                root: ff.display().to_string(),
+                password: None,
+                iterations: None,
+            });
         }
     }
     // Windows chromium uses app-bound encryption (DPAPI + more): not supported; login falls back to --window.
@@ -150,7 +180,10 @@ fn keychain_password(name: &str) -> Result<String> {
     let out = std::process::Command::new("security").args(["find-generic-password", "-w", "-s", &service]).output();
     match out {
         Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()),
-        Ok(o) => bail!("could not read the \"{service}\" password from the macOS Keychain ({})", crate::util::first_line(&String::from_utf8_lossy(&o.stderr))),
+        Ok(o) => bail!(
+            "could not read the \"{service}\" password from the macOS Keychain ({})",
+            crate::util::first_line(&String::from_utf8_lossy(&o.stderr))
+        ),
         Err(e) => bail!("could not read the \"{service}\" password from the macOS Keychain ({e})"),
     }
 }
@@ -189,7 +222,11 @@ struct Candidate {
 
 fn safe_readdir(dir: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else { return vec![] };
-    let mut out: Vec<String> = entries.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
     out.sort();
     out
 }
@@ -220,13 +257,22 @@ fn candidates_for(site: &str) -> Result<Vec<Candidate>> {
     for root in browser_roots()? {
         for entry in safe_readdir(&root.root) {
             let (db, table, host_col) = match root.family {
-                Family::Firefox => (Some(Path::new(&root.root).join(&entry).join("cookies.sqlite")).filter(|p| p.exists()), "moz_cookies", "host"),
+                Family::Firefox => {
+                    (Some(Path::new(&root.root).join(&entry).join("cookies.sqlite")).filter(|p| p.exists()), "moz_cookies", "host")
+                }
                 Family::Chromium => (chromium_cookie_db(&Path::new(&root.root).join(&entry)), "cookies", "host_key"),
             };
             let Some(db) = db else { continue };
             let Ok(names) = names_in(&db, table, host_col, site) else { continue };
             if !names.is_empty() {
-                out.push(Candidate { browser: root.name.clone(), profile: entry, family: root.family, root: root.clone(), db_path: db, names });
+                out.push(Candidate {
+                    browser: root.name.clone(),
+                    profile: entry,
+                    family: root.family,
+                    root: root.clone(),
+                    db_path: db,
+                    names,
+                });
             }
         }
     }
@@ -276,11 +322,14 @@ fn read_chromium(root: &BrowserRoot, db_path: &Path, site: &str) -> Result<Vec<S
     let key = derive_key(&password, iterations);
     with_db(db_path, |db| {
         let meta_version: i64 = db
-            .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| r.get::<_, String>(0).or_else(|_| r.get::<_, i64>(0).map(|n| n.to_string())))
+            .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| {
+                r.get::<_, String>(0).or_else(|_| r.get::<_, i64>(0).map(|n| n.to_string()))
+            })
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let mut stmt = db.prepare("SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies")?;
+        let mut stmt =
+            db.prepare("SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -390,7 +439,11 @@ pub fn import_from_browsers(url: &str, login_cookies: Option<&[String]>, pin: Op
     if let Some(pin) = pin {
         candidates.retain(|c| matches_pin(c, pin));
         if candidates.is_empty() {
-            bail!("no browser profile \"{}{}\" has cookies for {site}", pin.browser.as_ref().map(|b| format!("{b}/")).unwrap_or_default(), pin.profile);
+            bail!(
+                "no browser profile \"{}{}\" has cookies for {site}",
+                pin.browser.as_ref().map(|b| format!("{b}/")).unwrap_or_default(),
+                pin.profile
+            );
         }
     }
     let signed_in: Vec<usize> = candidates
@@ -423,7 +476,14 @@ pub fn import_from_browsers(url: &str, login_cookies: Option<&[String]>, pin: Op
         return Ok(None);
     }
     let (name, email) = profile_info(chosen);
-    Ok(Some(ImportedSession { cookies, source: format!("{}:{}", chosen.browser.to_lowercase(), chosen.profile), browser: chosen.browser.clone(), profile: chosen.profile.clone(), name, email }))
+    Ok(Some(ImportedSession {
+        cookies,
+        source: format!("{}:{}", chosen.browser.to_lowercase(), chosen.profile),
+        browser: chosen.browser.clone(),
+        profile: chosen.profile.clone(),
+        name,
+        email,
+    }))
 }
 
 /* --------------------------------------------------------------- file import */

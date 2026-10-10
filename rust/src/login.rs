@@ -31,7 +31,11 @@ pub fn resolve_login_target(target: &str) -> Result<LoginTarget> {
     if !re(r"(?i)^https?://").is_match(target) {
         let known = if crate::spec::site_name_ok(target) { load_site(target)? } else { None };
         if let Some(k) = known {
-            return Ok(LoginTarget { site: k.site.name.clone(), url: k.site.base_url.clone(), login_cookies: k.site.login_cookies.clone() });
+            return Ok(LoginTarget {
+                site: k.site.name.clone(),
+                url: k.site.base_url.clone(),
+                login_cookies: k.site.login_cookies.clone(),
+            });
         }
         if !re(r"(?i)^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(/.*)?$").is_match(target) {
             bail!("no site \"{target}\": give a site name from api-anything sites, a domain (example.com) or a URL");
@@ -74,7 +78,11 @@ pub async fn import_session(site: &str, url: &str, o: ImportOptions) -> Result<O
     let imported: Option<ImportedSession> = if let Some(file) = &o.file {
         let text = std::fs::read_to_string(file)?;
         let cookies: Vec<StoredCookie> = cookies_from_file(&text, url)?.into_iter().filter(|c| for_site(c, url)).collect();
-        if cookies.is_empty() { None } else { Some(ImportedSession { cookies, source: "file".into(), browser: "file".into(), profile: file.clone(), name: None, email: None }) }
+        if cookies.is_empty() {
+            None
+        } else {
+            Some(ImportedSession { cookies, source: "file".into(), browser: "file".into(), profile: file.clone(), name: None, email: None })
+        }
     } else {
         let pin: Option<ImportPin> = o.profile.as_ref().map(|p| parse_pin(p));
         import_from_browsers(url, o.login_cookies.as_deref(), pin.as_ref())?
@@ -105,7 +113,12 @@ pub fn browser_source(site: &str) -> Result<Option<String>> {
 pub async fn reimport_if_browser(site: &str, url: &str, login_cookies: Option<&[String]>) -> bool {
     let Ok(Some(source)) = browser_source(site) else { return false };
     let pin = parse_pin(&source);
-    let opts = ImportOptions { login_cookies: login_cookies.map(|l| l.to_vec()), profile: Some(format!("{}/{}", pin.browser.clone().unwrap_or_default(), pin.profile)), file: None, push_profile: true };
+    let opts = ImportOptions {
+        login_cookies: login_cookies.map(|l| l.to_vec()),
+        profile: Some(format!("{}/{}", pin.browser.clone().unwrap_or_default(), pin.profile)),
+        file: None,
+        push_profile: true,
+    };
     matches!(import_session(site, url, opts).await, Ok(Some(_)))
 }
 

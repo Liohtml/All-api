@@ -36,17 +36,10 @@ fn exchange(id: u64, body: Value, response: Value) -> Exchange {
 
 fn learned(body: Value, name: &str) -> Learned {
     let input = LearnInput::new(
-        vec![
-            exchange(1, json!({}), json!({"a": A, "b": B})),
-            exchange(2, body, json!({"results": ["kittens"]})),
-        ],
+        vec![exchange(1, json!({}), json!({"a": A, "b": B})), exchange(2, body, json!({"results": ["kittens"]}))],
         vec![args(json!({"q": "kittens"}))],
         name,
-        Trigger {
-            url: "https://site.test/?q={q}".into(),
-            steps: None,
-            soft_from: None,
-        },
+        Trigger { url: "https://site.test/?q={q}".into(), steps: None, soft_from: None },
         true,
     );
     learn_operation(&input).unwrap()
@@ -61,18 +54,12 @@ fn body_of(l: &Learned, q: &str, session: &Session) -> Value {
 fn distinct_issued_tokens_survive_learn_and_replay_including_another_operations_session_values() {
     let body = json!({"q": "kittens", "one": {"v": A}, "two": {"v": B}});
     let first = learned(body.clone(), "search");
-    let other = learned(
-        json!({"q": "kittens", "one": {"v": B}, "two": {"v": A}}),
-        "other",
-    );
+    let other = learned(json!({"q": "kittens", "one": {"v": B}, "two": {"v": A}}), "other");
     let mut values: IndexMap<String, String> = first.session_values.clone();
     values.extend(other.session_values.clone());
     let session = Session::with(vec![], values);
     assert_eq!(body_of(&first, "kittens", &session), body);
-    assert_eq!(
-        body_of(&other, "puppies", &session),
-        json!({"q": "puppies", "one": {"v": B}, "two": {"v": A}})
-    );
+    assert_eq!(body_of(&other, "puppies", &session), json!({"q": "puppies", "one": {"v": B}, "two": {"v": A}}));
 }
 
 #[test]
@@ -88,25 +75,10 @@ fn issued_credentials_are_removed_from_every_compound_copy_and_refresh_on_replay
     let l = learned(body, "search");
     let serialized = serde_json::to_string(&l.operation).unwrap();
     for token in [A, B] {
-        assert!(
-            !serialized.contains(token),
-            "credential in serialized operation"
-        );
+        assert!(!serialized.contains(token), "credential in serialized operation");
     }
-    let values: IndexMap<String, String> = l
-        .session_values
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                if v == A {
-                    "fresh-A".to_string()
-                } else {
-                    "fresh-B".to_string()
-                },
-            )
-        })
-        .collect();
+    let values: IndexMap<String, String> =
+        l.session_values.iter().map(|(k, v)| (k.clone(), if v == A { "fresh-A".to_string() } else { "fresh-B".to_string() })).collect();
     let replay = body_of(&l, "puppies", &Session::with(vec![], values));
     assert_eq!(
         replay,
@@ -139,16 +111,8 @@ fn a_write_rejected_inside_an_http_200_response_is_not_success_and_is_never_retr
         ],
     }));
     let op = s.operations.remove(0);
-    let obs = |status: u16, body: &str| Observed {
-        status,
-        headers: Headers::new(),
-        body: body.to_string(),
-        url: None,
-    };
-    assert_eq!(
-        judge(&op, &obs(200, r#"{"accepted":true}"#)).class,
-        Class::Ok
-    );
+    let obs = |status: u16, body: &str| Observed { status, headers: Headers::new(), body: body.to_string(), url: None };
+    assert_eq!(judge(&op, &obs(200, r#"{"accepted":true}"#)).class, Class::Ok);
     assert_eq!(judge(&op, &obs(204, "")).class, Class::Ok);
 }
 

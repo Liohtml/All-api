@@ -48,14 +48,26 @@ async fn learn_call_and_heal_against_the_fixture() {
     assert_eq!(r.operation.response.extract.as_deref(), Some("data.user.posts"));
     assert_eq!(r.captures.len(), 2);
 
-    let c = call("fix", "getUser", args(json!({"name": "carol"})), CallOptions { max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() }).await;
+    let c = call(
+        "fix",
+        "getUser",
+        args(json!({"name": "carol"})),
+        CallOptions { max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() },
+    )
+    .await;
     assert!(c.ok, "{c:?}");
     assert_eq!(c.tier, Some(1));
     assert_eq!(c.data.as_ref().unwrap()[0]["text"], json!("hello from carol"));
 
     // the site rotates its query id: the rescan heal swaps the new one in without a browser
     f.rotate();
-    let h = call("fix", "getUser", args(json!({"name": "dave"})), CallOptions { max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() }).await;
+    let h = call(
+        "fix",
+        "getUser",
+        args(json!({"name": "dave"})),
+        CallOptions { max_tier: Some(1), min_interval_ms: Some(0), ..Default::default() },
+    )
+    .await;
     assert!(h.ok, "{h:?}");
     assert_eq!(h.healed, Some(true));
     assert_eq!(h.data.as_ref().unwrap()[0]["text"], json!("hello from dave"));

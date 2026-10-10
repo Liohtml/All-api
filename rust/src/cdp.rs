@@ -49,7 +49,8 @@ pub struct Cdp {
 impl Cdp {
     /// A client over any transport: `tx` carries outgoing messages, `rx` yields incoming ones.
     fn from_channels(tx: mpsc::UnboundedSender<String>, mut rx: mpsc::UnboundedReceiver<String>) -> Cdp {
-        let shared = Arc::new(Shared { pending: Mutex::new(HashMap::new()), subscribers: Mutex::new(Vec::new()), closed: AtomicBool::new(false) });
+        let shared =
+            Arc::new(Shared { pending: Mutex::new(HashMap::new()), subscribers: Mutex::new(Vec::new()), closed: AtomicBool::new(false) });
         let s2 = shared.clone();
         tokio::spawn(async move {
             while let Some(text) = rx.recv().await {

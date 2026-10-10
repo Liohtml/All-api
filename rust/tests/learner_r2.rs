@@ -142,7 +142,11 @@ fn echo_refused(e: Exchange) {
 
 #[test]
 fn location_echo_analytics_context_page_url_in_the_body() {
-    echo_refused(post_json("https://api.site.test/repos/facebook/react", &[], json!({"context": {"page": {"url": "https://site.test/facebook/react"}}})));
+    echo_refused(post_json(
+        "https://api.site.test/repos/facebook/react",
+        &[],
+        json!({"context": {"page": {"url": "https://site.test/facebook/react"}}}),
+    ));
 }
 
 #[test]
@@ -182,7 +186,8 @@ fn control_a_request_that_carries_the_value_itself_still_learns_and_its_echo_fol
 
 #[test]
 fn a_segment_style_beacon_echoing_the_page_is_not_learned_over_the_ssr_document_product_hunt() {
-    let page = doc("https://www.site.test/search?q=notion", &format!("<html><body>{}</body></html>", "<li class=\"p\">Notion</li>".repeat(50)));
+    let page =
+        doc("https://www.site.test/search?q=notion", &format!("<html><body>{}</body></html>", "<li class=\"p\">Notion</li>".repeat(50)));
     let beacon = xhr_json(
         "POST",
         "https://e.site.test/v1/p",
@@ -246,7 +251,10 @@ fn credential_sid_query() {
 
 #[test]
 fn credential_refresh_token_json() {
-    credential_stays_out(post_json("https://api.site.test/v1/search", &[], json!({"q": "kittens", "refresh_token": TOKEN})), "refresh_token");
+    credential_stays_out(
+        post_json("https://api.site.test/v1/search", &[], json!({"q": "kittens", "refresh_token": TOKEN})),
+        "refresh_token",
+    );
 }
 
 #[test]
@@ -257,7 +265,12 @@ fn credential_auth_token_camel_json() {
 #[test]
 fn credential_id_token_form() {
     credential_stays_out(
-        xhr("POST", "https://api.site.test/v1/search", &[("content-type", "application/x-www-form-urlencoded")], Some(&format!("q=kittens&id_token={TOKEN}"))),
+        xhr(
+            "POST",
+            "https://api.site.test/v1/search",
+            &[("content-type", "application/x-www-form-urlencoded")],
+            Some(&format!("q=kittens&id_token={TOKEN}")),
+        ),
         "id_token",
     );
 }
@@ -283,7 +296,13 @@ fn a_value_the_page_keeps_in_local_storage_inside_a_json_entry_under_a_plain_nam
     let op = &learned.operation;
     assert!(!spec_text(op).contains(jwt));
     let refs: Vec<Value> = op.slots.iter().filter(|s| s.is_ref()).map(|s| json!([s.ref_str(), s.at.join(" > ")])).collect();
-    assert_eq!(refs, vec![json!(["session:op/sb-proj-auth/access_token", "header:x-user"]), json!(["session:op/sb-proj-auth/access_token", "body > json:/u"])]);
+    assert_eq!(
+        refs,
+        vec![
+            json!(["session:op/sb-proj-auth/access_token", "header:x-user"]),
+            json!(["session:op/sb-proj-auth/access_token", "body > json:/u"])
+        ]
+    );
     assert_eq!(learned.session_values["op/sb-proj-auth/access_token"], jwt);
     let r = built(op, json!({"q": "cats"}), &with_values(vec![], &learned.session_values));
     assert_eq!(r.headers["x-user"], jwt);
@@ -294,7 +313,8 @@ fn a_value_the_page_keeps_in_local_storage_inside_a_json_entry_under_a_plain_nam
 fn a_credential_named_key_the_site_ships_in_its_own_js_is_public_kept_literal_listed_and_export_allows_it() {
     let key = "d306zoyjsyarp7ifhu67rjxn52tv0t20";
     let e = get_with("https://api.site.test/v1/search?q=kittens", &[("x-site-api-key", key)]);
-    let op = learn(vec![script("https://site.test/main.js", &format!("var cfg={{apiKey:\"{key}\"}};")), e], vec![json!({"q": "kittens"})]).operation;
+    let op = learn(vec![script("https://site.test/main.js", &format!("var cfg={{apiKey:\"{key}\"}};")), e], vec![json!({"q": "kittens"})])
+        .operation;
     assert_eq!(op.request.headers["x-site-api-key"], key);
     assert_eq!(j(&op.public), json!(["x-site-api-key"]));
     save_as("shipped", "https://site.test", &op);
@@ -311,7 +331,11 @@ fn public_hashes_traceparent_and_client_versions_are_not_credentials() {
             enc(r#"{"q":"paris"}"#),
             enc(&json!({"persistedQuery": {"version": 1, "sha256Hash": hash}}).to_string())
         ),
-        &[("traceparent", trace), ("x-client-version", "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"), ("x-client-request-id", "0x9f8e7d6c5b4a39281706f5e4d3c2b1a0")],
+        &[
+            ("traceparent", trace),
+            ("x-client-version", "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"),
+            ("x-client-request-id", "0x9f8e7d6c5b4a39281706f5e4d3c2b1a0"),
+        ],
     );
     let op = learn(vec![e], vec![json!({"q": "paris"})]).operation;
     assert_eq!(op.slots.iter().filter(|s| s.is_ref()).map(j).collect::<Vec<_>>(), Vec::<Value>::new());
@@ -379,7 +403,8 @@ fn a_leaf_holding_both_an_arg_and_a_credential_next_search_q_arg_auth_cookie_kee
     assert_eq!(built(op, json!({"name": "carol"}), &jar(vec![cookie("tok", COOKIE2)])).url, url("carol", COOKIE2));
     // a session value in the same place is refilled from the session store
     let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl";
-    let mut i = input(vec![get(&format!("https://site.test/api/data?name=alice&next={}", next("alice", jwt)))], vec![json!({"name": "alice"})]);
+    let mut i =
+        input(vec![get(&format!("https://site.test/api/data?name=alice&next={}", next("alice", jwt)))], vec![json!({"name": "alice"})]);
     i.storage = Some(storage(&[("at", jwt)]));
     i.trigger = trigger("https://site.test/p?name={name}");
     let s = learn_operation(&i).unwrap();
@@ -418,7 +443,11 @@ fn export_flags_a_literal_ip_address_innertube_remote_host_not_versions_or_loopb
         "query": "kittens"
     });
     let op = learn(
-        vec![post_json("https://www.site.test/youtubei/v1/search", &[("user-agent", "Chrome/140.0.0.0"), ("x-forwarded-for", "127.0.0.1")], body)],
+        vec![post_json(
+            "https://www.site.test/youtubei/v1/search",
+            &[("user-agent", "Chrome/140.0.0.0"), ("x-forwarded-for", "127.0.0.1")],
+            body,
+        )],
         vec![json!({"query": "kittens"})],
     )
     .operation;
@@ -433,10 +462,17 @@ fn export_flags_a_literal_ip_address_innertube_remote_host_not_versions_or_loopb
 #[test]
 fn a_boolean_example_never_binds_to_a_lone_flag_under_another_key() {
     let e = post_json("https://api.site.test/gql", &[], json!({"variables": {"screen_name": "nasa", "withVoice": true}}));
-    assert_match(&err(&input(vec![e], vec![json!({"screen_name": "nasa", "includeReplies": true})])), r#"none with the key "includeReplies""#, "lone flag");
+    assert_match(
+        &err(&input(vec![e], vec![json!({"screen_name": "nasa", "includeReplies": true})])),
+        r#"none with the key "includeReplies""#,
+        "lone flag",
+    );
     let own = post_json("https://api.site.test/gql", &[], json!({"variables": {"screen_name": "nasa", "includeReplies": true}}));
     let op = learn(vec![own], vec![json!({"screen_name": "nasa", "includeReplies": true})]).operation;
-    assert_eq!(op.slots.iter().find(|s| s.param.as_deref() == Some("includeReplies")).map(|s| s.at.clone()), Some(vec!["body".to_string(), "json:/variables/includeReplies".to_string()]));
+    assert_eq!(
+        op.slots.iter().find(|s| s.param.as_deref() == Some("includeReplies")).map(|s| s.at.clone()),
+        Some(vec!["body".to_string(), "json:/variables/includeReplies".to_string()])
+    );
 }
 
 /* ---------------------------------------------- HEAL-2/3: rescan variants */

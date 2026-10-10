@@ -268,7 +268,7 @@ fn add_on_a_page_that_served_a_bot_challenge_does_not_tell_the_agent_to_fix_its_
 #[test]
 fn a_document_whose_url_ends_in_js_github_com_mrdoob_three_js_is_a_candidate_not_an_asset() {
     let doc = html_doc("https://github.com/mrdoob/three.js", "<html><body><strong itemprop=name><a>three.js</a></strong></body></html>", 200, None);
-    let ranked = rank_candidates(&[doc.clone()], &args(json!({ "owner": "mrdoob", "repo": "three.js" })), RankOptions::default());
+    let ranked = rank_candidates(std::slice::from_ref(&doc), &args(json!({ "owner": "mrdoob", "repo": "three.js" })), RankOptions::default());
     assert_eq!(ranked.iter().map(|c| c.id).collect::<Vec<_>>(), vec![doc.id]);
 }
 
@@ -292,7 +292,7 @@ fn add_from_with_repo_next_js_learns_the_document() {
 #[test]
 fn regression_a_plain_document_path_still_ranks() {
     let doc = html_doc("https://github.com/microsoft/playwright", "<html>playwright</html>", 200, None);
-    assert_eq!(rank_candidates(&[doc.clone()], &args(json!({ "repo": "playwright" })), RankOptions::default()).first().map(|c| c.id), Some(doc.id));
+    assert_eq!(rank_candidates(std::slice::from_ref(&doc), &args(json!({ "repo": "playwright" })), RankOptions::default()).first().map(|c| c.id), Some(doc.id));
 }
 
 #[test]

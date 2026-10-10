@@ -107,7 +107,9 @@ static CAPTCHA_WIDGET: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)google
 const CHALLENGE_STATUS: [u16; 5] = [202, 403, 405, 429, 503];
 // An interstitial's title gives it away even when the page is too big for the body scan.
 static CHALLENGE_TITLE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)<title[^>]*>[^<]*(prove your humanity|human verification|just a moment|attention required|are you a (human|robot)|verify you are (a )?human|robot check)")
+    re(
+        r"(?i)<title[^>]*>[^<]*(prove your humanity|human verification|just a moment|attention required|are you a (human|robot)|verify you are (a )?human|robot check)",
+    )
 });
 
 const LOGIN_SAID_SRC: &str = r#""require_login"\s*:\s*true|login_required|not logged in|(log|sign) ?in to continue|please (log|sign) ?in|authentication required|bad authentication|could not authenticate|bad guest token|invalid session|session (has )?expired"#;
@@ -117,7 +119,9 @@ static LOGIN: LazyLock<regex::Regex> =
 
 static PASSWORD_FIELD: LazyLock<regex::Regex> = LazyLock::new(|| re(r#"(?i)type=["']?password"#));
 static SIGN_IN_FORM: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r#"(?i)<input[^>]*name=["']?(user(name)?|e-?mail|login|session_key)\b|autocomplete=["']?(current-password|username)|<form[^>]*action=["']?[^"'>\s]*(log_?in|sign_?in|sign-in|session)"#)
+    re(
+        r#"(?i)<input[^>]*name=["']?(user(name)?|e-?mail|login|session_key)\b|autocomplete=["']?(current-password|username)|<form[^>]*action=["']?[^"'>\s]*(log_?in|sign_?in|sign-in|session)"#,
+    )
 });
 
 /// A sign-in form: a password field next to a username field, a current-password hint, or a form posting to a login path.
@@ -140,11 +144,15 @@ fn login_page(body: &str) -> bool {
 
 static RATE: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)rate.?limit|too many requests|please wait a few minutes|slow down"));
 static DRIFT: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)PersistedQueryNotFound|persisted query not found|must be defined|cannot be null|query not found|unknown (field|argument|operation)|cannot query field")
+    re(
+        r"(?i)PersistedQueryNotFound|persisted query not found|must be defined|cannot be null|query not found|unknown (field|argument|operation)|cannot query field",
+    )
 });
 // A CSRF *failure*, not a page that merely carries a token. The gap stays inside one message: no quote or tag.
 static CSRF_FAILED: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r#"(?i)(csrf|xsrf)[^"<>\n]{0,40}?(missing|invalid|mismatch|incorrect|expired|fail|not (set|found|valid|match))|(invalid|missing|bad|expired|can'?t verify|could not verify|requires? an? (valid|matching))[^"<>\n]{0,30}?(csrf|xsrf|authenticity)|InvalidAuthenticityToken"#)
+    re(
+        r#"(?i)(csrf|xsrf)[^"<>\n]{0,40}?(missing|invalid|mismatch|incorrect|expired|fail|not (set|found|valid|match))|(invalid|missing|bad|expired|can'?t verify|could not verify|requires? an? (valid|matching))[^"<>\n]{0,30}?(csrf|xsrf|authenticity)|InvalidAuthenticityToken"#,
+    )
 });
 // Instagram sends "require_login": false on its rate-limit answers, so the key alone means nothing.
 static REQUIRE_LOGIN: LazyLock<regex::Regex> = LazyLock::new(|| re(r#"(?i)"require_login"\s*:\s*true|login_required"#));
@@ -384,14 +392,13 @@ fn mentions_param(op: &Operation, body: &str) -> bool {
             continue;
         }
         // the nearest named step: json:/legs/0/origin/airports/0 names "airports", not "0"
-        let tokens: Vec<String> = s
-            .at
-            .iter()
-            .flat_map(|st| match st.strip_prefix("json:") {
-                Some(p) => p.split('/').map(|t| t.to_string()).collect::<Vec<_>>(),
-                None => vec![st[st.find(':').map(|i| i + 1).unwrap_or(0)..].to_string()],
-            })
-            .collect();
+        let tokens: Vec<String> =
+            s.at.iter()
+                .flat_map(|st| match st.strip_prefix("json:") {
+                    Some(p) => p.split('/').map(|t| t.to_string()).collect::<Vec<_>>(),
+                    None => vec![st[st.find(':').map(|i| i + 1).unwrap_or(0)..].to_string()],
+                })
+                .collect();
         if let Some(name) = tokens.iter().rev().find(|t| !t.is_empty() && !t.chars().all(|c| c.is_ascii_digit())) {
             names.push(name.clone());
         }
@@ -436,7 +443,11 @@ pub fn classify(op: &Operation, r: &Observed) -> Classified {
         return if LOGIN.is_match(body) || CSRF_FAILED.is_match(body) {
             is(Class::Auth, format!("HTTP 403 with login markers: {}", snippet(body)))
         } else {
-            Classified { class: Class::Blocked, reason: format!("HTTP 403 with no login or challenge markers: {}", snippet(body)), missing: true }
+            Classified {
+                class: Class::Blocked,
+                reason: format!("HTTP 403 with no login or challenge markers: {}", snippet(body)),
+                missing: true,
+            }
         };
     }
     if let Some(u) = r.url.as_ref().and_then(|u| parse_url(u)) {

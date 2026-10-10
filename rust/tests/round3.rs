@@ -257,8 +257,7 @@ mod a_beacon_that_echoes_the_spas_push_state_location_is_not_learned {
         let err = learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| {
             i.pages = Some(vec!["https://site.test/search?q=notion".into()])
         })
-        .err()
-        .expect("throws")
+        .expect_err("throws")
         .to_string();
         assert!(re("no captured request carries the example values").is_match(&err), "{err}");
     }
@@ -266,7 +265,7 @@ mod a_beacon_that_echoes_the_spas_push_state_location_is_not_learned {
     #[test]
     fn a_read_whose_chosen_answer_is_a_data_less_ack_is_refused_unless_the_request_was_picked_by_id() {
         let b = beacon(r#"{"success":true}"#);
-        let err = learn(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })]).err().expect("throws").to_string();
+        let err = learn(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })]).expect_err("throws").to_string();
         assert!(re("answers without data .*--pick-request.*--html or --embedded").is_match(&err), "{err}");
         assert_eq!(
             learn_with(vec![page(), data(), b.clone()], vec![json!({ "q": "notion" })], |i| i.id = Some(b.id)).unwrap().exchange.id,
@@ -393,7 +392,7 @@ fn a_route_resolver_whose_only_arg_is_the_page_path_learns_when_picked_by_id() {
     };
     let trigger = Trigger { url: "https://site.test/{repo}".into(), steps: None, soft_from: None };
     let t = trigger.clone();
-    let err = learn_with(exs.clone(), vec![json!({ "repo": "facebook/react" })], |i| i.trigger = t).err().expect("throws").to_string();
+    let err = learn_with(exs.clone(), vec![json!({ "repo": "facebook/react" })], |i| i.trigger = t).expect_err("throws").to_string();
     assert!(re("no captured request carries").is_match(&err), "{err}");
     let picked = exs[1].id;
     let op = learn_with(exs, vec![json!({ "repo": "facebook/react" })], |i| {
@@ -630,7 +629,7 @@ mod input_answers {
             assert_eq!(fetcher.count(), 0);
             let mut bad = base_json();
             bad["operations"][0]["params"] = json!([{ "name": "id", "pattern": "([" }]);
-            let err = parse_site(&bad).err().expect("throws").to_string();
+            let err = parse_site(&bad).expect_err("throws").to_string();
             assert!(re("valid regular expression").is_match(&err), "{err}");
         })
     }
@@ -989,7 +988,7 @@ mod browser {
             };
             // Playwright words this "Execution context was destroyed"; over CDP the evaluation fails with
             // "Inspected target navigated or closed". Either way the read's answer is the navigation, not a retry.
-            let err = page_fetch(fetch(base.clone(), false)).await.err().expect("rejects").to_string();
+            let err = page_fetch(fetch(base.clone(), false)).await.expect_err("rejects").to_string();
             assert!(re("Execution context was destroyed|Inspected target navigated").is_match(&err), "{err}");
             let r = page_fetch(fetch(other, true)).await.unwrap();
             assert_eq!(r.status, 200);

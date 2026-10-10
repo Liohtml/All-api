@@ -5,7 +5,9 @@ use crate::browser::{PageFetchOptions, ProfileInUse, chrome_available, page_fetc
 use crate::classify::{Class, Observed, judge};
 use crate::extract::cap_output;
 use crate::heal::{Attempt, HealOptions, HealResult, PROFILE_HINT, heal_operation, judge_exchange, profile_dir, run_op_trigger};
-use crate::http::{Args, BadHeader, RedirectRefused, RefusalKind, SendOptions, SharedFetcher, build_request, holds_ref, next_hop, send, with_defaults};
+use crate::http::{
+    Args, BadHeader, RedirectRefused, RefusalKind, SendOptions, SharedFetcher, build_request, holds_ref, next_hop, send, with_defaults,
+};
 use crate::login::reimport_if_browser;
 use crate::session::{Session, load_session, logged_in, merge_capture, save_session, session_file, with_lock};
 use crate::spec::{Operation, Site};
@@ -54,7 +56,18 @@ pub struct CallResult {
 
 impl CallResult {
     fn failed(class: Class, reason: String, next: Option<String>) -> CallResult {
-        CallResult { ok: false, class, data: None, truncated: None, tier: None, healed: None, ms: 0, reason: Some(reason), next, strategy: None }
+        CallResult {
+            ok: false,
+            class,
+            data: None,
+            truncated: None,
+            tier: None,
+            healed: None,
+            ms: 0,
+            reason: Some(reason),
+            next,
+            strategy: None,
+        }
     }
 }
 
@@ -81,7 +94,9 @@ fn next_for(c: Class, site: &str, op: &Operation, a: Option<&Attempt>) -> Option
         return None;
     }
     if c == Class::Refused {
-        return Some("only if the user asked for this write: rerun with --allow-writes (MCP: start the server with --allow-writes)".to_string());
+        return Some(
+            "only if the user asked for this write: rerun with --allow-writes (MCP: start the server with --allow-writes)".to_string(),
+        );
     }
     if let Some(h) = a.and_then(|a| a.hint.clone()) {
         return Some(h);
@@ -103,10 +118,16 @@ fn next_for(c: Class, site: &str, op: &Operation, a: Option<&Attempt>) -> Option
                 "rate limited: do not retry now; wait a few minutes".to_string()
             }
         }
-        Class::Blocked => format!("the site is challenging automated requests: ask the user to run api-anything login {site} and clear the challenge, then retry once"),
+        Class::Blocked => format!(
+            "the site is challenging automated requests: ask the user to run api-anything login {site} and clear the challenge, then retry once"
+        ),
         Class::Drift => {
             if !op.read_only {
-                format!("{}re-learn it with api-anything add {site} {} ... --write", if ran { "the write may have run: check the site first, then " } else { "" }, op.name)
+                format!(
+                    "{}re-learn it with api-anything add {site} {} ... --write",
+                    if ran { "the write may have run: check the site first, then " } else { "" },
+                    op.name
+                )
             } else {
                 format!("api-anything heal {site} {}; if that fails, re-learn it with api-anything add {site} {} ...", op.name, op.name)
             }
@@ -118,7 +139,18 @@ fn next_for(c: Class, site: &str, op: &Operation, a: Option<&Attempt>) -> Option
 
 fn success(a: &Attempt, reason: Option<String>, healed: Option<bool>) -> CallResult {
     let capped = cap_output(a.data.as_ref().unwrap_or(&Value::Null), 20_000);
-    CallResult { ok: true, class: Class::Ok, data: Some(if a.data.is_none() { Value::Null } else { capped.data }), truncated: capped.truncated, tier: Some(a.tier), healed, ms: 0, reason, next: None, strategy: None }
+    CallResult {
+        ok: true,
+        class: Class::Ok,
+        data: Some(if a.data.is_none() { Value::Null } else { capped.data }),
+        truncated: capped.truncated,
+        tier: Some(a.tier),
+        healed,
+        ms: 0,
+        reason,
+        next: None,
+        strategy: None,
+    }
 }
 
 /// The op's stored example args, with defaults; None when a required param has none.
@@ -169,13 +201,21 @@ async fn attempt(ctx: &Ctx, op: &Operation, tier: Tier) -> Attempt {
                     return a;
                 }
                 let why = if r.kind.is_some() {
-                    format!("the site's redirects for this request do not end (a loop, or a chain past the limit); learn the operation again from the page that uses it, at the address the site now answers from: {add}")
+                    format!(
+                        "the site's redirects for this request do not end (a loop, or a chain past the limit); learn the operation again from the page that uses it, at the address the site now answers from: {add}"
+                    )
                 } else if op.read_only {
-                    format!("the site sends this request on to another origin, which was not followed; re-learn it with {add} if the site moved there")
+                    format!(
+                        "the site sends this request on to another origin, which was not followed; re-learn it with {add} if the site moved there"
+                    )
                 } else {
                     format!("re-learn it with {add} if the site moved there")
                 };
-                a.hint = Some(if op.read_only { format!("do not retry: {why}") } else { format!("the write may have run: check the site first. Do not retry: {why}") });
+                a.hint = Some(if op.read_only {
+                    format!("do not retry: {why}")
+                } else {
+                    format!("the write may have run: check the site first. Do not retry: {why}")
+                });
                 return a;
             }
             let mut a = Attempt::new(tier, Class::Error, &crate::util::first_line(&e.to_string()));
@@ -192,7 +232,11 @@ async fn attempt_inner(ctx: &Ctx, op: &Operation, tier: Tier) -> anyhow::Result<
         let judged = run.matched.as_ref().and_then(|m| judge_exchange(op, m));
         // The page is told nothing of a redirect that was stopped, its status included: this is the answer.
         let resent = if run.resends > 0 {
-            let mut a = Attempt::new(tier, Class::Error, "the site answered this write with a redirect that would send it again: stopped in the browser");
+            let mut a = Attempt::new(
+                tier,
+                Class::Error,
+                "the site answered this write with a redirect that would send it again: stopped in the browser",
+            );
             a.ambiguous = true;
             a.hint = Some(sent_once(&ctx.site, op));
             Some(a)
@@ -201,7 +245,11 @@ async fn attempt_inner(ctx: &Ctx, op: &Operation, tier: Tier) -> anyhow::Result<
         };
         let mut a = judged.or(resent).unwrap_or_else(|| match &run.login_wall {
             Some(w) => Attempt::new(tier, Class::Auth, &format!("the trigger landed on a sign-in page ({w})")),
-            None => Attempt::new(tier, Class::Drift, &format!("the trigger fired no request matching {}", json(&serde_json::to_value(&op.matcher).unwrap_or(Value::Null)))),
+            None => Attempt::new(
+                tier,
+                Class::Drift,
+                &format!("the trigger fired no request matching {}", json(&serde_json::to_value(&op.matcher).unwrap_or(Value::Null))),
+            ),
         });
         if run.repeats > 0 {
             let stopped = if run.repeats == 1 { "the repeat was".to_string() } else { format!("{} repeats were", run.repeats) };
@@ -211,7 +259,18 @@ async fn attempt_inner(ctx: &Ctx, op: &Operation, tier: Tier) -> anyhow::Result<
     }
     let session = load_session(&ctx.site)?;
     let (status, headers, body, url, redirected) = if tier == 1 {
-        let sent = send(op, &ctx.args, &session, &SendOptions { site: ctx.site.clone(), fetcher: ctx.opts.fetcher.clone(), timeout_ms: ctx.opts.timeout_ms, min_interval_ms: ctx.opts.min_interval_ms }).await?;
+        let sent = send(
+            op,
+            &ctx.args,
+            &session,
+            &SendOptions {
+                site: ctx.site.clone(),
+                fetcher: ctx.opts.fetcher.clone(),
+                timeout_ms: ctx.opts.timeout_ms,
+                min_interval_ms: ctx.opts.min_interval_ms,
+            },
+        )
+        .await?;
         // A rotating cookie (a rolling session, __cf_bm) must ride on the next call.
         if !sent.set_cookies.is_empty() {
             let _ = merge_capture(&ctx.site, &sent.set_cookies, &indexmap::IndexMap::new(), now_ms());
@@ -235,13 +294,24 @@ async fn attempt_inner(ctx: &Ctx, op: &Operation, tier: Tier) -> anyhow::Result<
             timeout_ms: ctx.opts.timeout_ms,
             retry_on_navigation: op.read_only,
             // tier 1's policy, one hop at a time: a page's own fetch() would follow with everything aboard
-            redirect: Some(Arc::new(move |from, status, location, taken| next_hop(&op2, &session2, from, status, location, taken, crate::http::MAX_REDIRECTS))),
+            redirect: Some(Arc::new(move |from, status, location, taken| {
+                next_hop(&op2, &session2, from, status, location, taken, crate::http::MAX_REDIRECTS)
+            })),
         })
         .await?;
         (r.status, r.headers, r.body, r.url, r.redirected)
     };
     let j = judge(op, &Observed { status, headers, body, url: Some(url) });
-    Ok(Attempt { tier, status: Some(status), redirected, class: j.class, reason: j.reason, missing: j.missing, data: j.data, ..Default::default() })
+    Ok(Attempt {
+        tier,
+        status: Some(status),
+        redirected,
+        class: j.class,
+        reason: j.reason,
+        missing: j.missing,
+        data: j.data,
+        ..Default::default()
+    })
 }
 
 /// Replace the jar with the profile's cookies. True when that changes the request this tier sends.
@@ -306,7 +376,10 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
                     c.class = Class::Input;
                     return fail(
                         &c,
-                        Some(format!("no results for these args ({}); the example args still return data, so the operation works", a.reason)),
+                        Some(format!(
+                            "no results for these args ({}); the example args still return data, so the operation works",
+                            a.reason
+                        )),
                         Some(format!("check the args against: api-anything ops {}; do not heal or re-add", ctx.site)),
                     );
                 }
@@ -340,7 +413,14 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
             }
             // the site's own request doesn't answer either: stop paying a browser run per call
             if b.hint.is_none() && b.class != Class::Auth {
-                mark_stale(&ctx.site, &op.name, &stale.as_ref().map(|s| s.reason.clone()).unwrap_or_else(|| guard.clone()), STALE_TTL_MS, now_ms(), Some(false));
+                mark_stale(
+                    &ctx.site,
+                    &op.name,
+                    &stale.as_ref().map(|s| s.reason.clone()).unwrap_or_else(|| guard.clone()),
+                    STALE_TTL_MS,
+                    now_ms(),
+                    Some(false),
+                );
             }
         }
         // `heal` refuses writes: a stale write is re-learned
@@ -359,7 +439,13 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
         let c = vctx.clone();
         Box::pin(async move { attempt(&c, &candidate, vtier).await })
     });
-    let h = heal_operation(&ctx.site, op, &ctx.args, HealOptions { validate, fetcher: ctx.opts.fetcher.clone(), login_cookies: site.login_cookies.clone(), browser: ctx.max_tier > 1 }).await;
+    let h = heal_operation(
+        &ctx.site,
+        op,
+        &ctx.args,
+        HealOptions { validate, fetcher: ctx.opts.fetcher.clone(), login_cookies: site.login_cookies.clone(), browser: ctx.max_tier > 1 },
+    )
+    .await;
     match h {
         HealResult::Healed { attempt: ha, .. } => success(&ha, None, Some(true)),
         // Throttled, challenged, logged out, or no browser: nothing was learned about the op, so it is not stale.
@@ -370,7 +456,14 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
         HealResult::Failed { reason, attempt: ha, fallback, .. } => {
             // A heal that tried everything and failed would fail the same way on the next call: don't rerun the browser each time.
             if ctx.max_tier > 1 {
-                mark_stale(&ctx.site, &op.name, &format!("heal failed: {reason}"), STALE_TTL_MS, now_ms(), Some(fallback.as_ref().map(|f| f.class == Class::Ok).unwrap_or(false)));
+                mark_stale(
+                    &ctx.site,
+                    &op.name,
+                    &format!("heal failed: {reason}"),
+                    STALE_TTL_MS,
+                    now_ms(),
+                    Some(fallback.as_ref().map(|f| f.class == Class::Ok).unwrap_or(false)),
+                );
             }
             // The template can't be replayed, but the site's own request answered: that is the tier-3 read.
             if let Some(f) = fallback.as_ref().filter(|f| f.class == Class::Ok && ctx.max_tier >= 3) {
@@ -389,7 +482,10 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
                 b.class = Class::Drift;
                 return fail(
                     &b,
-                    Some(format!("the site takes the same request but its response lacks the data ({}), for the op's example args too", a.reason)),
+                    Some(format!(
+                        "the site takes the same request but its response lacks the data ({}), for the op's example args too",
+                        a.reason
+                    )),
                     Some(format!(
                         "if the site works in a browser, re-learn the response recipe: api-anything add {} {} ... --extract <path> (api-anything capture <trigger url> shows the response); otherwise report it",
                         ctx.site, op.name
@@ -401,7 +497,10 @@ async fn on_drift(ctx: &Ctx, site: &Site, op: &Operation, a: Attempt) -> CallRes
             fail(
                 &b,
                 Some(format!("not drift: re-learning gave a byte-identical template ({})", a.reason)),
-                Some(format!("check the args against api-anything ops {}; if the site needs an account, ask the user to run api-anything login {}", ctx.site, ctx.site)),
+                Some(format!(
+                    "check the args against api-anything ops {}; if the site needs an account, ask the user to run api-anything login {}",
+                    ctx.site, ctx.site
+                )),
             )
         }
     }
@@ -422,15 +521,27 @@ fn resolve(site_name: &str, op_name: &str) -> Resolved {
             return Resolved::Failed(CallResult::failed(
                 if bad { Class::Input } else { Class::Error },
                 crate::util::first_line(&msg),
-                Some(if bad { "api-anything sites lists what exists".to_string() } else { "fix or delete that spec file, then retry once".to_string() }),
+                Some(if bad {
+                    "api-anything sites lists what exists".to_string()
+                } else {
+                    "fix or delete that spec file, then retry once".to_string()
+                }),
             ));
         }
     };
     let Some(r) = r else {
-        return Resolved::Failed(CallResult::failed(Class::Input, format!("no site \"{site_name}\""), Some("api-anything sites lists what exists; api-anything add creates one".to_string())));
+        return Resolved::Failed(CallResult::failed(
+            Class::Input,
+            format!("no site \"{site_name}\""),
+            Some("api-anything sites lists what exists; api-anything add creates one".to_string()),
+        ));
     };
     let Some(op) = r.site.operations.iter().find(|o| o.name == op_name).cloned() else {
-        return Resolved::Failed(CallResult::failed(Class::Input, format!("no operation \"{op_name}\" on {}", r.site.name), Some(format!("api-anything ops {}", r.site.name))));
+        return Resolved::Failed(CallResult::failed(
+            Class::Input,
+            format!("no operation \"{op_name}\" on {}", r.site.name),
+            Some(format!("api-anything ops {}", r.site.name)),
+        ));
     };
     Resolved::Found(r.site, op)
 }
@@ -451,7 +562,11 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
     let site_name = site.name.clone();
     let write = !op.read_only;
     if write && !opts.allow_writes {
-        return CallResult::failed(Class::Refused, format!("{} is a write and writes are not allowed", op.name), next_for(Class::Refused, &site_name, &op, None));
+        return CallResult::failed(
+            Class::Refused,
+            format!("{} is a write and writes are not allowed", op.name),
+            next_for(Class::Refused, &site_name, &op, None),
+        );
     }
     // A misspelled optional arg would silently fall back to its default: refuse it.
     let unknown: Vec<&String> = args.keys().filter(|k| !op.params.iter().any(|p| &p.name == *k)).collect();
@@ -459,7 +574,12 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
         let takes = op.params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
         return CallResult::failed(
             Class::Input,
-            format!("unknown arg {}; {} takes {}", unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), op.name, if takes.is_empty() { "no args".to_string() } else { takes }),
+            format!(
+                "unknown arg {}; {} takes {}",
+                unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                op.name,
+                if takes.is_empty() { "no args".to_string() } else { takes }
+            ),
             next_for(Class::Input, &site_name, &op, None),
         );
     }
@@ -471,13 +591,18 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
             return CallResult::failed(
                 Class::Error,
                 e.to_string(),
-                Some(format!("delete {}, then ask the user to run api-anything login {site_name} if the site needs an account", session_file(&site_name).map(|p| p.display().to_string()).unwrap_or_default())),
+                Some(format!(
+                    "delete {}, then ask the user to run api-anything login {site_name} if the site needs an account",
+                    session_file(&site_name).map(|p| p.display().to_string()).unwrap_or_default()
+                )),
             );
         }
     };
     if let Err(e) = build_request(&op, &args, &session) {
         let next = if e.downcast_ref::<BadHeader>().is_some() {
-            Some(format!("nothing was sent. Check the args; if the value is the session's, ask the user to run: api-anything login {site_name}"))
+            Some(format!(
+                "nothing was sent. Check the args; if the value is the session's, ask the user to run: api-anything login {site_name}"
+            ))
         } else {
             next_for(Class::Input, &site_name, &op, None)
         };
@@ -500,17 +625,26 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
     // A remembered escalation is a speed hint, not a requirement: under a lower cap, start at the op's own tier.
     let mut tier: Tier = op.min_tier.max(remembered.filter(|r| *r <= ctx.max_tier).unwrap_or(1));
     // Why a call ran above tier 1, so a slow call explains itself.
-    let mut notes: Vec<String> = if tier > op.min_tier { vec![format!("started at tier {tier}: an earlier call escalated there")] } else { vec![] };
+    let mut notes: Vec<String> =
+        if tier > op.min_tier { vec![format!("started at tier {tier}: an earlier call escalated there")] } else { vec![] };
     let mut auth_tried = false;
     let mut examples_checked = false;
     loop {
         if tier > ctx.max_tier {
-            let mut r = CallResult::failed(Class::Blocked, format!("needs tier {tier}, capped at {}", ctx.max_tier), Some(format!("allow a higher tier (--max-tier {tier})")));
+            let mut r = CallResult::failed(
+                Class::Blocked,
+                format!("needs tier {tier}, capped at {}", ctx.max_tier),
+                Some(format!("allow a higher tier (--max-tier {tier})")),
+            );
             r.tier = Some(tier);
             return r;
         }
         if tier > 1 && !chrome_available() {
-            let mut r = CallResult::failed(Class::Blocked, format!("tier {tier} needs Google Chrome"), Some("install Google Chrome, then retry once".to_string()));
+            let mut r = CallResult::failed(
+                Class::Blocked,
+                format!("tier {tier} needs Google Chrome"),
+                Some("install Google Chrome, then retry once".to_string()),
+            );
             r.tier = Some(tier);
             return r;
         }
@@ -543,11 +677,14 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
         if a.class == Class::Blocked && a.missing && !write && !examples_checked {
             examples_checked = true;
             if let Some(ex) = example_args(&op) {
-                if !same_args(&ex, &ctx.args, &op) && attempt(&Ctx { args: ex.clone(), ..ctx.clone() }, &op, tier).await.class == Class::Ok {
+                if !same_args(&ex, &ctx.args, &op) && attempt(&Ctx { args: ex.clone(), ..ctx.clone() }, &op, tier).await.class == Class::Ok
+                {
                     let mut r = CallResult::failed(
                         Class::Input,
                         format!("refused for these args ({}); the example args still return data, so the operation works", a.reason),
-                        Some(format!("check the args (a private, restricted or missing entity is refused this way) against: api-anything ops {site_name}; do not heal or re-add")),
+                        Some(format!(
+                            "check the args (a private, restricted or missing entity is refused this way) against: api-anything ops {site_name}; do not heal or re-add"
+                        )),
                     );
                     r.tier = Some(tier);
                     return r;
@@ -597,7 +734,11 @@ async fn call_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
             let b = attempt(&ctx, &op, 2).await;
             if b.class == Class::Ok {
                 remember_tier(&site_name, &op.name, Some(2));
-                return success(&b, Some(format!("tier 1 said auth with no login on record for this site ({}); a real page got the answer", a.reason)), None);
+                return success(
+                    &b,
+                    Some(format!("tier 1 said auth with no login on record for this site ({}); a real page got the answer", a.reason)),
+                    None,
+                );
             }
         }
         return fail(&a);
@@ -632,14 +773,31 @@ async fn heal_inner(site_name: &str, op_name: &str, args: Args, opts: CallOption
         let v = vctx.clone();
         Box::pin(async move { attempt(&v, &c, tier).await })
     });
-    let h = heal_operation(&site_name, &op, &ctx.args, HealOptions { validate, fetcher: opts.fetcher.clone(), login_cookies: site.login_cookies.clone(), browser: ctx.max_tier > 1 }).await;
+    let h = heal_operation(
+        &site_name,
+        &op,
+        &ctx.args,
+        HealOptions { validate, fetcher: opts.fetcher.clone(), login_cookies: site.login_cookies.clone(), browser: ctx.max_tier > 1 },
+    )
+    .await;
     match h {
         HealResult::Healed { attempt: a, strategy, .. } => {
             let mut r = success(&a, None, Some(true));
             r.strategy = Some(strategy);
             r
         }
-        HealResult::Identical { .. } => CallResult { ok: true, class: Class::Ok, data: None, truncated: None, tier: None, healed: Some(false), ms: 0, reason: Some("the stored template is already current".to_string()), next: None, strategy: None },
+        HealResult::Identical { .. } => CallResult {
+            ok: true,
+            class: Class::Ok,
+            data: None,
+            truncated: None,
+            tier: None,
+            healed: Some(false),
+            ms: 0,
+            reason: Some("the stored template is already current".to_string()),
+            next: None,
+            strategy: None,
+        },
         HealResult::Failed { reason, attempt: a, fallback, .. } => {
             let b = a.or(fallback);
             let class = b.as_ref().map(|b| b.class).unwrap_or(Class::Drift);

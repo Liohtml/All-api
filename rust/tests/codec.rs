@@ -103,7 +103,20 @@ fn nineteen_digit_snowflake_ids_never_lose_precision() {
 fn flights_request(origin: &str, dest: &str) -> Request {
     let inner = serde_json::to_string(&json!([
         [null, null, null, "HKUJcc"],
-        [null, null, 1, null, [], 1, [1, 0, 0, 0], null, null, null, null, null, null,
+        [
+            null,
+            null,
+            1,
+            null,
+            [],
+            1,
+            [1, 0, 0, 0],
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
             [
                 [[[[origin, 0]]], [[[dest, 0]]], null, 0, null, null, "2026-11-12"],
                 [[[[dest, 0]]], [[[origin, 0]]], null, 0, null, null, "2026-11-16"]

@@ -543,7 +543,7 @@ fn a_step_whose_selector_is_gone_fails_within_the_budget_and_names_the_selector(
         let fx = fx().await;
         let t0 = Instant::now();
         let r = trigger(&format!("{}/data-page?name=x", fx.url), Some(json!([{ "action": "click", "selector": "#gone-button" }])), Some(3000)).await;
-        let e = r.err().expect("the step fails");
+        let e = r.expect_err("the step fails");
         assert!(e.to_string().contains("#gone-button"), "{e}");
         assert!(t0.elapsed() < Duration::from_millis(8000), "{:?}", t0.elapsed());
     });

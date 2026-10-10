@@ -3,7 +3,10 @@ use crate::browser::{ProfileInUse, chrome_available, close_browser, login as log
 use crate::classify::{Observed, bot_wall, empty_results, login_path, sign_in_form};
 use crate::execute::{CallOptions, call, heal};
 use crate::extract::{cap_output, extract, get_path, inner_json, pick, returned_fields, split_pick};
-use crate::heal::{AddInput, CaptureFile, CapturePageOptions, FromCapture, PROFILE_HINT, Recipe, add_operation, capture_page, capture_trigger, fill_trigger, load_capture, profile_dir, unplaced};
+use crate::heal::{
+    AddInput, CaptureFile, CapturePageOptions, FromCapture, PROFILE_HINT, Recipe, add_operation, capture_page, capture_trigger,
+    fill_trigger, load_capture, profile_dir, unplaced,
+};
 use crate::http::{Args, build_request};
 use crate::import::AmbiguousProfile;
 use crate::learn::{Candidate, RankOptions, capture_pages, page_urls, rank_candidates};
@@ -35,7 +38,8 @@ fn one_line(m: &str) -> String {
 
 fn help(cmd: &str) -> &'static str {
     match cmd {
-        "login" => r#"api-anything login <site|url> [--profile "Chrome/Profile 1"] [--window] [--cookies <file>]
+        "login" => {
+            r#"api-anything login <site|url> [--profile "Chrome/Profile 1"] [--window] [--cookies <file>]
   By default imports the site's cookies from your everyday browser (you are almost always already
   signed in there, so no password and no re-doing 2FA). Prints which profile was used and the cookie
   NAMES only (plus the profile's display name and Google account). The imported session is the SAME
@@ -47,9 +51,11 @@ fn help(cmd: &str) -> &'static str {
               remembered: a later automatic re-import uses the same profile.
   --window    open a visible Chrome window to sign in by hand (an independent session); also the
               automatic fallback when nothing is importable. This is where you solve 2FA/captchas.
-  --cookies   import a cookies.txt (Netscape) or JSON export (Cookie-Editor / Playwright), for CI"#,
+  --cookies   import a cookies.txt (Netscape) or JSON export (Cookie-Editor / Playwright), for CI"#
+        }
         "logout" => "api-anything logout <site>\n  Clears the stored cookie jar and this site's cookies in api-anything's Chrome profile.",
-        "capture" => r#"api-anything capture <url> [--steps <json>] [--soft-from <url>] [--example k=v]... [--write] [--limit n] [--outline]
+        "capture" => {
+            r#"api-anything capture <url> [--steps <json>] [--soft-from <url>] [--example k=v]... [--write] [--limit n] [--outline]
   Loads the page in Chrome and lists the requests it made, noise filtered and ranked (requests carrying
   the --example values first). Saves everything as a capture id for: add --from <id> --pick-request <n>,
   and for: inspect <id> <n>. Captures hold cookie values; the newest 20 are kept, none past 24 h.
@@ -60,15 +66,19 @@ fn help(cmd: &str) -> &'static str {
                example values are, a suggested --extract and --pick fields with samples, JSON the page
                embeds (a ready --embedded regex), and a repeated HTML list as a ready --html recipe
   Output: capture (the id), candidates, next (what to do). blocked: the bot challenge the site served.
-  pageStatus: the page's own HTTP error, when a request it loaded is recommended all the same."#,
-        "inspect" => r#"api-anything inspect <captureId> [<requestId>] [--extract <path>] [--pick a,b] [--html <json>] [--embedded <regex>] [--outline --example k=v]
+  pageStatus: the page's own HTTP error, when a request it loaded is recommended all the same."#
+        }
+        "inspect" => {
+            r#"api-anything inspect <captureId> [<requestId>] [--extract <path>] [--pick a,b] [--html <json>] [--embedded <regex>] [--outline --example k=v]
   No browser. Without a request id, lists every request in the capture. With one, shows its request and
   response through add's recipe flags, so a recipe is tried here first: --extract (also spelled --path),
   --pick, --html, --embedded. A path, selector or regex that finds nothing fails (exit 1). An empty
   list at a path is a result, and so is an --html items selector "<container> <item>" whose container
   is on the page with no item in it (data: [], with a note).
-  --outline summarizes the response (as capture --outline does) instead of printing it."#,
-        "add" => r#"api-anything add <site> <op> --trigger <url-template> --example k=v [--example2 k=v] [options]
+  --outline summarizes the response (as capture --outline does) instead of printing it."#
+        }
+        "add" => {
+            r#"api-anything add <site> <op> --trigger <url-template> --example k=v [--example2 k=v] [options]
   Runs the trigger twice in Chrome (with --example, then --example2 or --example again), picks the request
   carrying the example values, and saves the learned operation to ~/.api-anything/sites/<site>.json.
   --trigger       page URL with {param} placeholders, e.g. https://site.com/u/{name}
@@ -96,14 +106,25 @@ fn help(cmd: &str) -> &'static str {
                   ever saved as a read
   --description <text>  what the op is for; an op added again with no --example keeps the one it had ("" clears it)
   Output: preview (what a call returns, from the captured response), warnings (read them), captures.
-  replaced: an op of that name was learned again."#,
-        "call" => "api-anything call <site> <op> [k=v ...] [--json <args-object>] [--allow-writes] [--max-tier 1|2|3] [--dry]\n  Calls an operation: {ok, class, data, tier, healed?, ms, next?}. --dry prints the request with credentials redacted.",
+  replaced: an op of that name was learned again."#
+        }
+        "call" => {
+            "api-anything call <site> <op> [k=v ...] [--json <args-object>] [--allow-writes] [--max-tier 1|2|3] [--dry]\n  Calls an operation: {ok, class, data, tier, healed?, ms, next?}. --dry prints the request with credentials redacted."
+        }
         "verify" => "api-anything verify [site]\n  Calls every read operation with its stored example args, healing as needed.",
         "sites" => "api-anything sites\n  Lists known sites (user specs in ~/.api-anything/sites win over bundled ones).",
-        "ops" => "api-anything ops <site>\n  Lists a site's operations and params (with each param's format), and the site's notes: caveats,\n  arg formats and login advice from <site>.md beside its spec.",
-        "heal" => "api-anything heal <site> <op> [k=v ...]\n  Forces a heal (rescan, then recapture) even when the op is marked stale. Reads only.",
-        "export" => "api-anything export <site> [--out <file>] [--keep-examples] [--force]\n  Writes a shareable spec: examples and response shapes stripped, and refused if a live cookie or\n  session value is inside. --keep-examples keeps param examples you confirmed are public (so verify works).",
-        "mcp" => "api-anything mcp [--allow-writes]\n  Serves list_sites, list_operations, call_operation and login over stdio MCP. MCP cannot create\n  operations (use capture/add here), and its login only refreshes a session a human imported here.",
+        "ops" => {
+            "api-anything ops <site>\n  Lists a site's operations and params (with each param's format), and the site's notes: caveats,\n  arg formats and login advice from <site>.md beside its spec."
+        }
+        "heal" => {
+            "api-anything heal <site> <op> [k=v ...]\n  Forces a heal (rescan, then recapture) even when the op is marked stale. Reads only."
+        }
+        "export" => {
+            "api-anything export <site> [--out <file>] [--keep-examples] [--force]\n  Writes a shareable spec: examples and response shapes stripped, and refused if a live cookie or\n  session value is inside. --keep-examples keeps param examples you confirmed are public (so verify works)."
+        }
+        "mcp" => {
+            "api-anything mcp [--allow-writes]\n  Serves list_sites, list_operations, call_operation and login over stdio MCP. MCP cannot create\n  operations (use capture/add here), and its login only refreshes a session a human imported here."
+        }
         _ => "",
     }
 }
@@ -154,7 +175,9 @@ fn fail_with(message: impl Into<String>, next: impl Into<String>, extra: Map<Str
 fn kv(list: &[String]) -> Result<IndexMap<String, String>> {
     let mut args = IndexMap::new();
     for item in list {
-        let Some(eq) = item.find('=').filter(|i| *i >= 1) else { return Err(fail(format!("expected k=v, got \"{item}\""), "write args as name=value")) };
+        let Some(eq) = item.find('=').filter(|i| *i >= 1) else {
+            return Err(fail(format!("expected k=v, got \"{item}\""), "write args as name=value"));
+        };
         args.insert(item[..eq].to_string(), item[eq + 1..].to_string());
     }
     Ok(args)
@@ -254,7 +277,11 @@ fn parse_args(argv: &[String]) -> Result<Parsed> {
                 Some(eq) => (&rest[..eq], Some(rest[eq + 1..].to_string())),
                 None => (rest, None),
             };
-            let Some((_, kind)) = OPTIONS.iter().find(|(n, _)| *n == name) else { return Err(anyhow!("Unknown option '--{name}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--{name}\"")) };
+            let Some((_, kind)) = OPTIONS.iter().find(|(n, _)| *n == name) else {
+                return Err(anyhow!(
+                    "Unknown option '--{name}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--{name}\""
+                ));
+            };
             match kind {
                 Kind::Bool => {
                     if !p.bools.iter().any(|b| b == name) {
@@ -310,7 +337,10 @@ fn steps_of(text: Option<&str>, command: &str) -> Result<Option<Vec<TriggerStep>
             if let Some(a) = s.get("action").and_then(|a| a.as_str()) {
                 if !StepAction::ALL.contains(&a) {
                     let upload = if a.to_lowercase().contains("upload") { " (file uploads are not supported)" } else { "" };
-                    return Err(fail(format!("--steps: unknown action \"{a}\"{upload}; the actions are {}", StepAction::ALL.join(", ")), format!("api-anything {command} --help shows --steps")));
+                    return Err(fail(
+                        format!("--steps: unknown action \"{a}\"{upload}; the actions are {}", StepAction::ALL.join(", ")),
+                        format!("api-anything {command} --help shows --steps"),
+                    ));
                 }
             }
         }
@@ -327,7 +357,8 @@ fn need_chrome() -> Result<()> {
 
 fn require_site(name: Option<&str>) -> Result<crate::store::Resolved> {
     let Some(name) = name else { return Err(fail("missing <site>", "api-anything sites")) };
-    load_site(name)?.ok_or_else(|| fail(format!("no site \"{name}\""), "api-anything sites lists what exists; api-anything add creates one"))
+    load_site(name)?
+        .ok_or_else(|| fail(format!("no site \"{name}\""), "api-anything sites lists what exists; api-anything add creates one"))
 }
 
 fn examples_of(op: &Operation) -> Args {
@@ -338,7 +369,10 @@ fn examples_of(op: &Operation) -> Args {
 
 async fn run_window(site: &str, url: &str, login_cookies: Option<&[String]>, reason: Option<&str>) -> Result<i32> {
     need_chrome()?;
-    eprintln!("{}Sign in to {url} in the Chrome window, then close it or press Enter here.", reason.map(|r| format!("{r} ")).unwrap_or_default());
+    eprintln!(
+        "{}Sign in to {url} in the Chrome window, then close it or press Enter here.",
+        reason.map(|r| format!("{r} ")).unwrap_or_default()
+    );
     let cookies = login_window(url, &profile_dir(), true).await?;
     let file = session_file(site)?;
     let c2 = cookies.clone();
@@ -348,23 +382,44 @@ async fn run_window(site: &str, url: &str, login_cookies: Option<&[String]>, rea
         s.source = Some("window".into());
         save_session(site, &s)
     })?;
-    out(&j!({ "ok": true, "site": site, "source": "window", "cookies": cookie_names(&cookies), "loggedIn": is_logged_in(&cookies, login_cookies) }));
+    out(
+        &j!({ "ok": true, "site": site, "source": "window", "cookies": cookie_names(&cookies), "loggedIn": is_logged_in(&cookies, login_cookies) }),
+    );
     Ok(0)
 }
 
 async fn cmd_login(p: &Parsed) -> Result<i32> {
     let Some(target) = p.pos.first() else { return Err(fail("missing <site|url>", "api-anything login <site|url>")) };
-    let t = resolve_login_target(target).map_err(|e| fail(e.to_string(), "api-anything sites lists known sites; or pass a domain (linkedin.com) or a full https:// URL"))?;
+    let t = resolve_login_target(target)
+        .map_err(|e| fail(e.to_string(), "api-anything sites lists known sites; or pass a domain (linkedin.com) or a full https:// URL"))?;
     if p.flag("window") {
         return run_window(&t.site, &t.url, t.login_cookies.as_deref(), None).await;
     }
-    let imported = match import_session(&t.site, &t.url, ImportOptions { login_cookies: t.login_cookies.clone(), profile: p.get("profile").map(|s| s.to_string()), file: p.get("cookies").map(|s| s.to_string()), push_profile: true }).await {
+    let imported = match import_session(
+        &t.site,
+        &t.url,
+        ImportOptions {
+            login_cookies: t.login_cookies.clone(),
+            profile: p.get("profile").map(|s| s.to_string()),
+            file: p.get("cookies").map(|s| s.to_string()),
+            push_profile: true,
+        },
+    )
+    .await
+    {
         Ok(i) => i,
         Err(e) => {
             if let Some(a) = e.downcast_ref::<AmbiguousProfile>() {
                 let mut extra = Map::new();
                 extra.insert("candidates".into(), serde_json::to_value(&a.candidates)?);
-                return Err(fail_with(a.to_string(), format!("ask the user which account to use, then: api-anything login {} --profile \"<Browser/Profile>\" (one of candidates[].profile)", t.site), extra));
+                return Err(fail_with(
+                    a.to_string(),
+                    format!(
+                        "ask the user which account to use, then: api-anything login {} --profile \"<Browser/Profile>\" (one of candidates[].profile)",
+                        t.site
+                    ),
+                    extra,
+                ));
             }
             return Err(e);
         }
@@ -374,7 +429,10 @@ async fn cmd_login(p: &Parsed) -> Result<i32> {
             return Err(fail(format!("no cookies for {} in {f}", t.site), "check the export is for the right site"));
         }
         if let Some(pr) = p.get("profile") {
-            return Err(fail(format!("no importable cookies in profile \"{pr}\""), format!("run: api-anything login {} (scans every profile), or --window", t.site)));
+            return Err(fail(
+                format!("no importable cookies in profile \"{pr}\""),
+                format!("run: api-anything login {} (scans every profile), or --window", t.site),
+            ));
         }
         return run_window(&t.site, &t.url, t.login_cookies.as_deref(), Some("No signed-in session found in your browsers.")).await;
     };
@@ -423,28 +481,55 @@ fn page_says(c: &CaptureFile, ranked: &[Candidate], values: &[String]) -> PageSa
     let none = PageSays { stop: None, also: None, status: None };
     let pages: Vec<String> = capture_pages(&c.result).iter().map(|u| u.split('#').next().unwrap_or("").to_string()).collect();
     // the main frame's last document: a widget's iframe is a document too
-    let Some(page) = c.result.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.is_some() && pages.contains(&e.request.url)) else { return none };
+    let Some(page) =
+        c.result.exchanges.iter().rfind(|e| e.resource_type == "document" && e.response.is_some() && pages.contains(&e.request.url))
+    else {
+        return none;
+    };
     let Some(res) = &page.response else { return none };
     let status = res.status;
     let body = res.body.clone().unwrap_or_default();
     // A login path is where sign-in pages live, and where a public /docs/login/... page may too: it takes the form as well.
     if login_path(&c.result.final_url) && sign_in_form(&body) {
-        return PageSays { stop: Some(format!("the page is a sign-in page: ask the user to run api-anything login <site>, then capture again (api-anything inspect {} {} shows the page, if it is what you wanted)", c.id, page.id)), also: None, status: None };
+        return PageSays {
+            stop: Some(format!(
+                "the page is a sign-in page: ask the user to run api-anything login <site>, then capture again (api-anything inspect {} {} shows the page, if it is what you wanted)",
+                c.id, page.id
+            )),
+            also: None,
+            status: None,
+        };
     }
     // What would be learned from: the candidates' answers. A beacon that echoes the page is not one.
     let asked: Vec<String> = values.iter().filter(|x| x.len() >= 3).map(|x| x.to_lowercase()).collect();
-    let answers: Vec<String> = ranked.iter().map(|r| c.result.exchanges.iter().find(|e| e.id == r.id).map(|e| e.body().to_lowercase()).unwrap_or_default()).collect();
+    let answers: Vec<String> = ranked
+        .iter()
+        .map(|r| c.result.exchanges.iter().find(|e| e.id == r.id).map(|e| e.body().to_lowercase()).unwrap_or_default())
+        .collect();
     let unseen = !asked.is_empty() && !answers.iter().any(|a| asked.iter().any(|x| a.contains(x)));
     let also = if !sign_in_form(&body) {
         None
     } else if unseen {
-        Some(format!("none of the example values is in what these requests returned, and the page shows a sign-in form: check the example values (api-anything inspect {} <id> shows a response); if the data is missing, ask the user to run api-anything login <site>, then capture again", c.id))
+        Some(format!(
+            "none of the example values is in what these requests returned, and the page shows a sign-in form: check the example values (api-anything inspect {} <id> shows a response); if the data is missing, ask the user to run api-anything login <site>, then capture again",
+            c.id
+        ))
     } else {
-        Some("the page also shows a sign-in form: if the data you want is missing, ask the user to run api-anything login <site> first".to_string())
+        Some(
+            "the page also shows a sign-in form: if the data you want is missing, ask the user to run api-anything login <site> first"
+                .to_string(),
+        )
     };
     // An error is a dead end when the erroring page is itself what would be recommended.
     if status >= 400 && ranked.first().map(|r| r.id).unwrap_or(page.id) == page.id {
-        return PageSays { stop: Some(format!("the page answered HTTP {status}: check the URL, then capture again{}", also.map(|a| format!("; {a}")).unwrap_or_default())), also: None, status: None };
+        return PageSays {
+            stop: Some(format!(
+                "the page answered HTTP {status}: check the URL, then capture again{}",
+                also.map(|a| format!("; {a}")).unwrap_or_default()
+            )),
+            also: None,
+            status: None,
+        };
     }
     PageSays { also, status: if status >= 400 { Some(status) } else { None }, stop: None }
 }
@@ -460,8 +545,19 @@ async fn cmd_capture(p: &Parsed) -> Result<i32> {
     let limit = positive(p.get("limit"), "limit", "capture")?.unwrap_or(15);
     let examples = kv(p.multi("example").map(|v| v.as_slice()).unwrap_or(&[]))?;
     let args = str_args(&examples);
-    let c = capture_page(CapturePageOptions { url: url.clone(), steps: p.steps.clone(), soft_from: p.get("soft-from").map(|s| s.to_string()), write: p.flag("write"), args: Some(args.clone()) }).await?;
-    let ranked = rank_candidates(&c.result.exchanges, &args, RankOptions { all: false, pages: Some(page_urls(&c.result.exchanges, &capture_pages(&c.result))), second: None });
+    let c = capture_page(CapturePageOptions {
+        url: url.clone(),
+        steps: p.steps.clone(),
+        soft_from: p.get("soft-from").map(|s| s.to_string()),
+        write: p.flag("write"),
+        args: Some(args.clone()),
+    })
+    .await?;
+    let ranked = rank_candidates(
+        &c.result.exchanges,
+        &args,
+        RankOptions { all: false, pages: Some(page_urls(&c.result.exchanges, &capture_pages(&c.result))), second: None },
+    );
     let values: Vec<String> = examples.values().cloned().collect();
     let candidates: Vec<Value> = ranked
         .iter()
@@ -502,9 +598,18 @@ async fn cmd_capture(p: &Parsed) -> Result<i32> {
     let wall = wall_of(doc).or_else(|| wall_of(top_ex));
     let page = if wall.is_some() { PageSays { stop: None, also: None, status: None } } else { page_says(&c, &ranked, &values) };
     let learn = if html {
-        format!("the best candidate is the HTML page (server-rendered): api-anything inspect {} {} to read it, then add <site> <op> --from {} --pick-request {} --example k=v with --html '<recipe>' or --embedded '<regex>'", c.id, top.unwrap().id, c.id, top.unwrap().id)
+        format!(
+            "the best candidate is the HTML page (server-rendered): api-anything inspect {} {} to read it, then add <site> <op> --from {} --pick-request {} --example k=v with --html '<recipe>' or --embedded '<regex>'",
+            c.id,
+            top.unwrap().id,
+            c.id,
+            top.unwrap().id
+        )
     } else {
-        format!("api-anything add <site> <op> --from {} --pick-request <id> --example k=v (api-anything inspect {} <id> shows a response)", c.id, c.id)
+        format!(
+            "api-anything add <site> <op> --from {} --pick-request <id> --example k=v (api-anything inspect {} <id> shows a response)",
+            c.id, c.id
+        )
     };
     let mut v = Map::new();
     v.insert("capture".into(), j!(c.id));
@@ -518,7 +623,9 @@ async fn cmd_capture(p: &Parsed) -> Result<i32> {
         v.insert("pageStatus".into(), j!(s));
     }
     let next = match (&wall, &page.stop, &page.also) {
-        (Some(w), _, _) => format!("the site served a bot challenge ({w}): ask the user to run api-anything login <site> (clear the challenge in the window), then capture again"),
+        (Some(w), _, _) => format!(
+            "the site served a bot challenge ({w}): ask the user to run api-anything login <site> (clear the challenge in the window), then capture again"
+        ),
         (None, Some(s), _) => s.clone(),
         (None, None, Some(a)) => format!("{learn}; {a}"),
         _ => learn,
@@ -569,7 +676,9 @@ fn cmd_inspect(p: &Parsed) -> Result<i32> {
         out(&j!({ "capture": c.id, "url": c.url, "requests": requests }));
         return Ok(0);
     };
-    let Some(e) = req_id.parse::<u64>().ok().and_then(|n| c.result.exchanges.iter().find(|x| x.id == n)) else { return Err(fail(format!("no request {req_id} in capture {id}"), format!("api-anything inspect {id}"))) };
+    let Some(e) = req_id.parse::<u64>().ok().and_then(|n| c.result.exchanges.iter().find(|x| x.id == n)) else {
+        return Err(fail(format!("no request {req_id} in capture {id}"), format!("api-anything inspect {id}")));
+    };
     if p.flag("outline") {
         let values: Vec<String> = kv(p.multi("example").map(|v| v.as_slice()).unwrap_or(&[]))?.values().cloned().collect();
         let mut v = j!({ "id": e.id, "request": { "method": e.request.method, "url": e.request.url } });
@@ -583,7 +692,15 @@ fn cmd_inspect(p: &Parsed) -> Result<i32> {
     let path = p.get("extract").or_else(|| p.get("path"));
     let body = e.body().to_string();
     // A recipe that finds nothing says so: no data field, or [] from a selector, reads as "no results".
-    let nothing = |what: &str| fail(format!("{what} in request {}'s response", e.id), format!("api-anything inspect {id} {} --outline --example k=v suggests a recipe; with no recipe flag it prints the whole response", e.id));
+    let nothing = |what: &str| {
+        fail(
+            format!("{what} in request {}'s response", e.id),
+            format!(
+                "api-anything inspect {id} {} --outline --example k=v suggests a recipe; with no recipe flag it prints the whole response",
+                e.id
+            ),
+        )
+    };
     let mut data: Value = Value::String(body.clone());
     let mut note: Option<String> = None;
     if let Some(h) = &html {
@@ -596,7 +713,15 @@ fn cmd_inspect(p: &Parsed) -> Result<i32> {
             note = Some(format!("no items: the container of \"{}\" is on the page and empty, so this is a page with no results", h.items));
         }
     } else if let Some(regex) = p.get("embedded") {
-        data = extract(&ResponseSpec { format: Format::Embedded, embedded: Some(crate::spec::Embedded { regex: regex.to_string() }), ..Default::default() }, &body)?.ok_or_else(|| nothing("the --embedded regex found no JSON"))?;
+        data = extract(
+            &ResponseSpec {
+                format: Format::Embedded,
+                embedded: Some(crate::spec::Embedded { regex: regex.to_string() }),
+                ..Default::default()
+            },
+            &body,
+        )?
+        .ok_or_else(|| nothing("the --embedded regex found no JSON"))?;
     } else if !e.response.as_ref().map(|r| r.content_type.to_lowercase().contains("html")).unwrap_or(false) {
         if let Ok(Some(d)) = extract(&ResponseSpec::default(), &body) {
             data = d; // not JSON: show the text
@@ -610,10 +735,16 @@ fn cmd_inspect(p: &Parsed) -> Result<i32> {
         data = pick(&data, &split_pick(pk))?;
     }
     let sent = e.request.body.as_deref();
-    let form = sent.map(|s| re(r"(?i)x-www-form-urlencoded").is_match(e.request.headers.get("content-type").map(|c| c.as_str()).unwrap_or("")) && !crate::util::is_json_text(s)).unwrap_or(false);
+    let form = sent
+        .map(|s| {
+            re(r"(?i)x-www-form-urlencoded").is_match(e.request.headers.get("content-type").map(|c| c.as_str()).unwrap_or(""))
+                && !crate::util::is_json_text(s)
+        })
+        .unwrap_or(false);
     let shown_body = sent.map(|s| {
         if form {
-            let pairs: Map<String, Value> = url::form_urlencoded::parse(s.as_bytes()).map(|(k, v)| (k.into_owned(), Value::String(v.into_owned()))).collect();
+            let pairs: Map<String, Value> =
+                url::form_urlencoded::parse(s.as_bytes()).map(|(k, v)| (k.into_owned(), Value::String(v.into_owned()))).collect();
             unlayer(&Value::Object(pairs), 0)
         } else {
             unlayer(&Value::String(s.to_string()), 0)
@@ -676,7 +807,9 @@ fn capture_again(c: &CaptureFile, ex1: &IndexMap<String, String>, ex2: &IndexMap
 }
 
 async fn cmd_add(p: &Parsed) -> Result<i32> {
-    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else { return Err(fail("missing <site> <op>", "api-anything add --help")) };
+    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else {
+        return Err(fail("missing <site> <op>", "api-anything add --help"));
+    };
     if p.get("trigger").is_none() && p.get("from").is_none() {
         return Err(fail("missing --trigger (or --from <captureId>)", "api-anything add --help"));
     }
@@ -705,13 +838,33 @@ async fn cmd_add(p: &Parsed) -> Result<i32> {
         let next = match again {
             Some(a) => format!("capture the page again with the second example's values: {a}"),
             None => {
-                let how: Vec<&str> = [Some("its url"), c.soft_from.as_ref().map(|_| "--soft-from"), c.steps.as_ref().map(|_| "--steps"), if write { Some("--write") } else { None }].into_iter().flatten().collect();
-                format!("the first example's values are not in capture {}'s url or steps, so the command cannot be written out: capture that page again the way {} was made ({}), with the second example's values", c.id, c.id, how.join(", "))
+                let how: Vec<&str> = [
+                    Some("its url"),
+                    c.soft_from.as_ref().map(|_| "--soft-from"),
+                    c.steps.as_ref().map(|_| "--steps"),
+                    if write { Some("--write") } else { None },
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                format!(
+                    "the first example's values are not in capture {}'s url or steps, so the command cannot be written out: capture that page again the way {} was made ({}), with the second example's values",
+                    c.id,
+                    c.id,
+                    how.join(", ")
+                )
             }
         };
-        return Err(fail("--example2 with --from needs --from2: a capture holds one run", format!("{next}; then run this add again with --from2 <the new capture's id>")));
+        return Err(fail(
+            "--example2 with --from needs --from2: a capture holds one run",
+            format!("{next}; then run this add again with --from2 <the new capture's id>"),
+        ));
     }
-    let trigger = p.get("trigger").map(|t| Trigger { url: t.to_string(), steps: p.steps.clone(), soft_from: p.get("soft-from").map(|s| s.to_string()) });
+    let trigger = p.get("trigger").map(|t| Trigger {
+        url: t.to_string(),
+        steps: p.steps.clone(),
+        soft_from: p.get("soft-from").map(|s| s.to_string()),
+    });
     let mut examples = vec![str_args(&ex1)];
     if let Some(e2) = &ex2 {
         examples.push(str_args(e2));
@@ -767,13 +920,23 @@ async fn cmd_add(p: &Parsed) -> Result<i32> {
         v.insert("captures".into(), j!(r.captures));
     }
     v.insert("saved".into(), j!(r.path));
-    v.insert("next".into(), j!(format!("api-anything call {site} {} {}", op.name, op.params.iter().map(|x| format!("{}=...", x.name)).collect::<Vec<_>>().join(" ")).trim()));
+    v.insert(
+        "next".into(),
+        j!(format!(
+            "api-anything call {site} {} {}",
+            op.name,
+            op.params.iter().map(|x| format!("{}=...", x.name)).collect::<Vec<_>>().join(" ")
+        )
+        .trim()),
+    );
     out(&Value::Object(v));
     Ok(0)
 }
 
 async fn cmd_call(p: &Parsed) -> Result<i32> {
-    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else { return Err(fail("missing <site> <op>", "api-anything call --help")) };
+    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else {
+        return Err(fail("missing <site> <op>", "api-anything call --help"));
+    };
     if let Some(t) = p.get("max-tier") {
         if !["1", "2", "3"].contains(&t) {
             return Err(fail(format!("--max-tier must be 1, 2 or 3, got \"{t}\""), "pass --max-tier 1, 2 or 3"));
@@ -785,7 +948,9 @@ async fn cmd_call(p: &Parsed) -> Result<i32> {
     }
     if p.flag("dry") {
         let r = require_site(Some(site))?;
-        let Some(op) = r.site.operations.iter().find(|o| &o.name == name) else { return Err(fail(format!("no operation \"{name}\" on {site}"), format!("api-anything ops {site}"))) };
+        let Some(op) = r.site.operations.iter().find(|o| &o.name == name) else {
+            return Err(fail(format!("no operation \"{name}\" on {site}"), format!("api-anything ops {site}")));
+        };
         let real = load_session(site)?;
         // Placeholders in place of every credential, so --dry output is safe to paste anywhere.
         let redacted = Session {
@@ -825,7 +990,12 @@ async fn cmd_verify(p: &Parsed) -> Result<i32> {
                 continue;
             }
             let args = examples_of(&op);
-            let missing: Vec<String> = op.params.iter().filter(|x| x.required && args.get(&x.name).is_none() && x.default.is_none()).map(|x| x.name.clone()).collect();
+            let missing: Vec<String> = op
+                .params
+                .iter()
+                .filter(|x| x.required && args.get(&x.name).is_none() && x.default.is_none())
+                .map(|x| x.name.clone())
+                .collect();
             if !missing.is_empty() {
                 results.push(j!({ "site": name, "op": op.name, "ok": false, "skipped": format!("no example for {}", missing.join(", ")) }));
                 continue;
@@ -911,10 +1081,19 @@ fn cmd_ops(p: &Parsed) -> Result<i32> {
             }
             v.insert(
                 "params".into(),
-                j!(o.params.iter().map(|x| {
-                    let a = about(x);
-                    format!("{}:{}{}{}", x.name, x.kind.name(), if x.required { "" } else { "?" }, if a.is_empty() { String::new() } else { format!(" ({})", a.join("; ")) })
-                }).collect::<Vec<_>>()),
+                j!(o.params
+                    .iter()
+                    .map(|x| {
+                        let a = about(x);
+                        format!(
+                            "{}:{}{}{}",
+                            x.name,
+                            x.kind.name(),
+                            if x.required { "" } else { "?" },
+                            if a.is_empty() { String::new() } else { format!(" ({})", a.join("; ")) }
+                        )
+                    })
+                    .collect::<Vec<_>>()),
             );
             if o.min_tier > 1 {
                 v.insert("minTier".into(), j!(o.min_tier));
@@ -932,7 +1111,9 @@ fn cmd_ops(p: &Parsed) -> Result<i32> {
 }
 
 async fn cmd_heal(p: &Parsed) -> Result<i32> {
-    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else { return Err(fail("missing <site> <op>", "api-anything heal <site> <op>")) };
+    let (Some(site), Some(name)) = (p.pos.first(), p.pos.get(1)) else {
+        return Err(fail("missing <site> <op>", "api-anything heal <site> <op>"));
+    };
     let r = require_site(Some(site))?;
     let mut args: Args = r.site.operations.iter().find(|o| &o.name == name).map(examples_of).unwrap_or_default();
     for (k, v) in kv(&p.pos[2..])? {
@@ -953,7 +1134,11 @@ fn cmd_export(p: &Parsed) -> Result<i32> {
     if !r.secrets.is_empty() && !p.flag("force") {
         let mut extra = Map::new();
         extra.insert("secrets".into(), j!(r.secrets));
-        return Err(fail_with(format!("refusing to export: {} live credential(s) in the spec", r.secrets.len()), "remove them (re-add the op or edit the spec); --force only if a human confirmed they are public", extra));
+        return Err(fail_with(
+            format!("refusing to export: {} live credential(s) in the spec", r.secrets.len()),
+            "remove them (re-add the op or edit the spec); --force only if a human confirmed they are public",
+            extra,
+        ));
     }
     for w in &r.warnings {
         eprintln!("warning: {w}");
@@ -980,7 +1165,27 @@ const COMMANDS: &[(&str, &[&str])] = &[
     ("logout", &[]),
     ("capture", &["steps", "soft-from", "example", "write", "limit", "outline"]),
     ("inspect", &["path", "extract", "pick", "html", "embedded", "outline", "example"]),
-    ("add", &["trigger", "example", "example2", "steps", "soft-from", "match", "from", "pick-request", "from2", "extract", "pick", "html", "embedded", "public", "write", "description"]),
+    (
+        "add",
+        &[
+            "trigger",
+            "example",
+            "example2",
+            "steps",
+            "soft-from",
+            "match",
+            "from",
+            "pick-request",
+            "from2",
+            "extract",
+            "pick",
+            "html",
+            "embedded",
+            "public",
+            "write",
+            "description",
+        ],
+    ),
     ("call", &["json", "allow-writes", "max-tier", "dry"]),
     ("verify", &[]),
     ("sites", &[]),

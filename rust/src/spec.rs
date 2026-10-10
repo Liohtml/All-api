@@ -9,8 +9,7 @@ use serde_json::Value;
 /// A step through decoded request layers; see codec.rs.
 pub fn valid_step(step: &str) -> bool {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"^(path:\d+|(query|form)(\[\d+\])?:.+|header:.+|json:(/.*)?|b64|body)$").unwrap())
-        .is_match(step)
+    RE.get_or_init(|| regex::Regex::new(r"^(path:\d+|(query|form)(\[\d+\])?:.+|header:.+|json:(/.*)?|b64|body)$").unwrap()).is_match(step)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -404,8 +403,7 @@ fn serde_issue(e: &serde_json::Error) -> String {
 }
 
 pub fn parse_site(input: &Value) -> Result<Site> {
-    let mut site: Site = serde_json::from_value(input.clone())
-        .map_err(|e| anyhow!("invalid site spec:\n{}", serde_issue(&e)))?;
+    let mut site: Site = serde_json::from_value(input.clone()).map_err(|e| anyhow!("invalid site spec:\n{}", serde_issue(&e)))?;
     let issues = validate_site(&site);
     if !issues.is_empty() {
         return Err(anyhow!("invalid site spec:\n{}", issues.join("\n")));

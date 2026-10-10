@@ -38,10 +38,9 @@ impl Bundled {
     }
     fn spec(&self, name: &str) -> Option<(String, String)> {
         match self {
-            Bundled::Embedded => bundled::BUNDLED
-                .iter()
-                .find(|(n, _, _)| *n == name)
-                .map(|(n, j, _)| (format!("<bundled>/{n}.json"), j.to_string())),
+            Bundled::Embedded => {
+                bundled::BUNDLED.iter().find(|(n, _, _)| *n == name).map(|(n, j, _)| (format!("<bundled>/{n}.json"), j.to_string()))
+            }
             Bundled::Dir(d) => {
                 let p = d.join(format!("{name}.json"));
                 fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t))
@@ -342,11 +341,7 @@ pub fn export_site(name: &str, keep_examples: bool) -> Result<Exported> {
             let typed = p.kind != crate::spec::ParamType::String
                 && slot.template.is_none()
                 && slot.at.last().map(|s| s.starts_with("json:")).unwrap_or(false);
-            let value = if typed {
-                Value::Null
-            } else {
-                Value::String(slot.template.clone().unwrap_or_else(|| format!("{{{}}}", p.name)))
-            };
+            let value = if typed { Value::Null } else { Value::String(slot.template.clone().unwrap_or_else(|| format!("{{{}}}", p.name))) };
             if let Ok(req) = set_at(&op.request, &slot.at, &value) {
                 op.request = req;
             }
@@ -384,17 +379,16 @@ pub fn export_site(name: &str, keep_examples: bool) -> Result<Exported> {
                 ));
             }
             if let Some(ip) = ip_in(&leaf.value) {
-                ips.push(format!("{where_} holds the IP address {ip} (likely yours, as the page reported it); blank it if the site does not need it"));
+                ips.push(format!(
+                    "{where_} holds the IP address {ip} (likely yours, as the page reported it); blank it if the site does not need it"
+                ));
             }
         }
     }
     let scan = scan_secrets(&serde_json::to_value(&spec)?, &load_session(name)?, &allowed);
     // one finding per place: the exact live hit already names it
-    let more: Vec<String> = named
-        .into_iter()
-        .filter(|(p, _)| !scan.secrets.iter().any(|s| s.starts_with(&format!("{p} "))))
-        .map(|(_, why)| why)
-        .collect();
+    let more: Vec<String> =
+        named.into_iter().filter(|(p, _)| !scan.secrets.iter().any(|s| s.starts_with(&format!("{p} ")))).map(|(_, why)| why).collect();
     let mut secrets = scan.secrets;
     secrets.extend(more);
     let mut warnings = scan.warnings;

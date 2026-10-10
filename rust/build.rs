@@ -22,7 +22,8 @@ fn main() {
         }
     }
     entries.sort();
-    let mut out = String::from("/// (site name, spec JSON, notes) for every bundled site.\npub static BUNDLED: &[(&str, &str, Option<&str>)] = &[\n");
+    let mut out =
+        String::from("/// (site name, spec JSON, notes) for every bundled site.\npub static BUNDLED: &[(&str, &str, Option<&str>)] = &[\n");
     for (name, json, md) in entries {
         let md = match md {
             Some(m) => format!("Some(include_str!({:?}))", m.canonicalize().unwrap().display().to_string()),

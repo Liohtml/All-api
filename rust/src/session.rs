@@ -65,11 +65,7 @@ pub fn write_private(file: &Path, text: &str) -> Result<()> {
     if let Some(dir) = file.parent() {
         ensure_dir(dir)?;
     }
-    let tmp = file.with_file_name(format!(
-        "{}.{}.tmp",
-        file.file_name().and_then(|f| f.to_str()).unwrap_or("file"),
-        std::process::id()
-    ));
+    let tmp = file.with_file_name(format!("{}.{}.tmp", file.file_name().and_then(|f| f.to_str()).unwrap_or("file"), std::process::id()));
     fs::write(&tmp, text)?;
     #[cfg(unix)]
     {
@@ -87,9 +83,7 @@ pub fn read_json(file: &Path) -> Result<Option<Value>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|e| anyhow!("{} is corrupt ({}); fix or delete it", file.display(), e))
+    serde_json::from_str(&text).map(Some).map_err(|e| anyhow!("{} is corrupt ({}); fix or delete it", file.display(), e))
 }
 
 /// Run f holding an exclusive lock file next to `file`, so a read-modify-write in one process
@@ -106,12 +100,7 @@ pub fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
             Ok(_) => held = true,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Ok(meta) = fs::metadata(&lock) {
-                    let age = meta
-                        .modified()
-                        .ok()
-                        .and_then(|m| m.elapsed().ok())
-                        .map(|d| d.as_millis() as f64)
-                        .unwrap_or(0.0);
+                    let age = meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_millis() as f64).unwrap_or(0.0);
                     if age > 10_000.0 {
                         let _ = fs::remove_file(&lock);
                     }
@@ -225,8 +214,7 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
     if req_path == cookie_path {
         return true;
     }
-    req_path.starts_with(cookie_path)
-        && (cookie_path.ends_with('/') || req_path.as_bytes().get(cookie_path.len()) == Some(&b'/'))
+    req_path.starts_with(cookie_path) && (cookie_path.ends_with('/') || req_path.as_bytes().get(cookie_path.len()) == Some(&b'/'))
 }
 
 fn secure_ok(u: &url::Url) -> bool {
@@ -291,9 +279,7 @@ pub fn cookie_value(cookies: &[StoredCookie], name: &str, url: Option<&str>, now
     let u = parse_url(url)?;
     let site = site_of(&u.host_str().unwrap_or("").to_lowercase());
     let secure = secure_ok(&u);
-    live.into_iter()
-        .find(|c| site_of(c.domain.trim_start_matches('.')) == site && (!c.secure || secure))
-        .map(|c| c.value.clone())
+    live.into_iter().find(|c| site_of(c.domain.trim_start_matches('.')) == site && (!c.secure || secure)).map(|c| c.value.clone())
 }
 
 /// One Set-Cookie line, scoped per RFC 6265 to the URL that set it; None if it may not be set there.
@@ -383,7 +369,9 @@ pub fn parse_cookie_header(raw: &str) -> IndexMap<String, String> {
 
 // name heuristic for "logged in"; a site's spec can pin exact names via loginCookies.
 pub static AUTH_COOKIE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    re(r"(?i)^(auth_token|sessionid|session_id|li_at|sid|ssid|__secure-\dpsid|user_session|reddit_session|remember_\w+|\w*_session|\w*_sess)$")
+    re(
+        r"(?i)^(auth_token|sessionid|session_id|li_at|sid|ssid|__secure-\dpsid|user_session|reddit_session|remember_\w+|\w*_session|\w*_sess)$",
+    )
 });
 
 pub fn logged_in(cookies: &[StoredCookie], login_cookies: Option<&[String]>, now: f64) -> bool {
@@ -393,7 +381,5 @@ pub fn logged_in(cookies: &[StoredCookie], login_cookies: Option<&[String]>, now
             return names.iter().all(|n| live.iter().any(|c| &c.name == n));
         }
     }
-    live.iter().any(|c| {
-        (AUTH_COOKIE.is_match(&c.name) && c.value.len() >= 8) || (c.name == "logged_in" && c.value == "yes")
-    })
+    live.iter().any(|c| (AUTH_COOKIE.is_match(&c.name) && c.value.len() >= 8) || (c.name == "logged_in" && c.value == "yes"))
 }

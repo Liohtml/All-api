@@ -1,8 +1,9 @@
 //! Port of test/edge/learn-slots.test.ts: regressions for the learner's slots. Credentials that
 //! reached the spec or were stored under the wrong name, and params the second example proves or
-//! disproves. The Rust crate has no heal module yet, so the `addOperation` halves of the TS tests
+//! disproves. The `addOperation` halves of the TS tests
 //! are run through `learn_operation` with the same inputs (`add_like`), and the "nothing is saved"
-//! directory checks are left out.
+//! directory checks are covered by heal_edge.rs.
+#![allow(clippy::type_complexity)]
 mod common;
 use api_anything::heal::{AddInput, AddResult, CaptureFile, FromCapture, add_operation};
 use api_anything::http::build_request;
@@ -167,7 +168,11 @@ fn a_repeated_json_key_is_refused_where_a_slot_would_go_in_any_occurrence_and_is
     }
     // in JSON inside a string too
     let vars = json!({"q": "nasa", "vars": format!(r#"{{"token":"x","token":"{B}"}}"#)}).to_string();
-    assert_match(&err(&input(vec![post(&vars, &[])], vec![json!({"q": "nasa"})])), r"repeats a key \(body > json:/vars > json:/token\)", "vars");
+    assert_match(
+        &err(&input(vec![post(&vars, &[])], vec![json!({"q": "nasa"})])),
+        r"repeats a key \(body > json:/vars > json:/token\)",
+        "vars",
+    );
     // a repeated key that is no slot and holds none is sent as captured, byte for byte
     for body in [r#"{"q":"nasa","limit":1,"limit":2}"#, r#"{"q":"nasa","meta":{},"meta":{"a":[1]},"x":"y","x":"y"}"#] {
         let mut i = input(vec![post(body, &[])], vec![json!({"q": "nasa"})]);
@@ -202,7 +207,14 @@ fn a_name_marked_public_keeps_no_per_session_field_no_cookie_and_no_stored_value
     };
     let names = ["sv", "theme", "token", "x-app", "x-ctx"];
     // control: each of the five is a reference when nobody says otherwise
-    let mut refs: Vec<String> = learn_operation(&base()).unwrap().operation.slots.iter().filter(|s| s.is_ref()).map(|s| s.at[0].split(':').nth(1).unwrap().to_string()).collect();
+    let mut refs: Vec<String> = learn_operation(&base())
+        .unwrap()
+        .operation
+        .slots
+        .iter()
+        .filter(|s| s.is_ref())
+        .map(|s| s.at[0].split(':').nth(1).unwrap().to_string())
+        .collect();
     refs.sort();
     assert_eq!(refs, strs(&names));
     let mut i = base();
@@ -309,8 +321,14 @@ async fn a_per_session_field_marked_public_is_saved_and_exported_as_a_reference_
     let short = "aB3dEf9hK2";
     let requests: Vec<(&str, Exchange)> = vec![
         ("query:token", get(&format!("{LOCAL}?q=kittens&token={short}"))),
-        ("form:token", xhr("POST", LOCAL, &[("content-type", "application/x-www-form-urlencoded")], Some(&format!("q=kittens&token={short}")))),
-        ("body > json:/token", xhr("POST", LOCAL, &[("content-type", "application/json")], Some(&json!({"q": "kittens", "token": short}).to_string()))),
+        (
+            "form:token",
+            xhr("POST", LOCAL, &[("content-type", "application/x-www-form-urlencoded")], Some(&format!("q=kittens&token={short}"))),
+        ),
+        (
+            "body > json:/token",
+            xhr("POST", LOCAL, &[("content-type", "application/json")], Some(&json!({"q": "kittens", "token": short}).to_string())),
+        ),
         // a short stored value inside the field: too short to cut out, so the whole field is the reference
         ("query:token", get(&format!("{LOCAL}?q=kittens&token=prefix:{short}:suffix"))),
     ];
@@ -340,8 +358,16 @@ fn a_cookie_sitting_unquoted_or_url_decoded_next_to_an_arg_in_one_leaf_is_refuse
         i
     };
 
-    assert_match(&err(&run(&format!("user=nasa;auth={bare}"))), r"header:x-ctx holds cookie:JSESSIONID without its quotes.*credential.*Not learned: learn another request .*--pick-request", "unquoted");
-    assert_match(&err(&run(&format!("user=nasa;xsrf={decoded}"))), r"header:x-ctx holds cookie:XSRF-TOKEN URL-decoded.*credential", "decoded");
+    assert_match(
+        &err(&run(&format!("user=nasa;auth={bare}"))),
+        r"header:x-ctx holds cookie:JSESSIONID without its quotes.*credential.*Not learned: learn another request .*--pick-request",
+        "unquoted",
+    );
+    assert_match(
+        &err(&run(&format!("user=nasa;xsrf={decoded}"))),
+        r"header:x-ctx holds cookie:XSRF-TOKEN URL-decoded.*credential",
+        "decoded",
+    );
     // the same in a leaf no param is in: only one of its credentials can be transformed when filled
     assert_match(&err(&run(&format!("{bare}:{decoded}"))), r"header:x-ctx holds cookie:XSRF-TOKEN URL-decoded", "both");
 
@@ -354,7 +380,10 @@ fn a_cookie_sitting_unquoted_or_url_decoded_next_to_an_arg_in_one_leaf_is_refuse
 
     // another cookie holds the same text as stored: it fills the hole exactly, whatever the jar's order
     let both = || vec![cookie("quoted", &format!("\"{SID}\"")), cookie("raw", SID)];
-    let mut i = input(vec![get_with("https://api.site.test/v1/search?q=nasa", &[("x-ctx", &format!("q=nasa;auth={SID}"))])], vec![json!({"q": "nasa"})]);
+    let mut i = input(
+        vec![get_with("https://api.site.test/v1/search?q=nasa", &[("x-ctx", &format!("q=nasa;auth={SID}"))])],
+        vec![json!({"q": "nasa"})],
+    );
     i.cookies = both();
     let exact = learn_operation(&i).unwrap().operation;
     assert_eq!(last(&exact), json!({"param": "q", "at": ["header:x-ctx"], "template": "q={q};auth={cookie:raw}"}));
@@ -405,7 +434,12 @@ fn body_cookie() -> Vec<StoredCookie> {
     vec![cookie("last", &enc(&saved_body()))]
 }
 
-fn learn_with(e: Exchange, cookies: Vec<StoredCookie>, st: Option<IndexMap<String, String>>, public: Option<Vec<String>>) -> Result<Learned, anyhow::Error> {
+fn learn_with(
+    e: Exchange,
+    cookies: Vec<StoredCookie>,
+    st: Option<IndexMap<String, String>>,
+    public: Option<Vec<String>>,
+) -> Result<Learned, anyhow::Error> {
     let mut i = input(vec![e], vec![json!({"q": "kittens"})]);
     i.cookies = cookies;
     i.storage = st;
@@ -424,8 +458,10 @@ async fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_an
     // keys that would keep the cookie's text in the spec if any part of the container were serialized:
     // the cookie as it is, percent-encoded, in base64, with text after it, in base64 twice
     let keys = ["aB3dE", "%61%42%33%64%45", "YUIzZEU=", "aB3dEx", "aB3dE:1", "aB3dEabcd", "%61%42%33%64%45x", "YUIzZEV4", "WVVJelpFVT0="];
-    let mut cases: Vec<(String, Exchange, Vec<StoredCookie>, Option<IndexMap<String, String>>)> =
-        keys.iter().map(|k| (format!("the key {k}"), csrf_local(obj(&[("q", json!("kittens")), (k, json!("v1"))])), short(), None)).collect();
+    let mut cases: Vec<(String, Exchange, Vec<StoredCookie>, Option<IndexMap<String, String>>)> = keys
+        .iter()
+        .map(|k| (format!("the key {k}"), csrf_local(obj(&[("q", json!("kittens")), (k, json!("v1"))])), short(), None))
+        .collect();
     cases.push(("an opaque key".into(), csrf_local(whole), vec![], None));
     cases.push(("a short cookie beside the param".into(), csrf_local(json!({"q": "kittens", "stamp": "aB3dE"})), short(), None));
     let before = files_of("overlap");
@@ -447,8 +483,13 @@ async fn a_param_inside_a_container_that_is_a_session_value_refuses_the_learn_an
 #[tokio::test]
 async fn marked_public_a_container_that_is_in_no_cookie_and_no_storage_stays_as_captured_and_its_param_is_filled() {
     let short = vec![cookie("sess", "aB3dE")];
-    let header = add_like("public-header", csrf_local(json!({"q": "kittens", "aB3dE": "v1"})), short, None, Some(strs(&["x-csrf-token"]))).await.unwrap();
-    assert_eq!(j(&header.operation.slots), json!([{"param": "q", "at": ["query:q"]}, {"param": "q", "at": ["header:x-csrf-token", "json:/q"]}]));
+    let header = add_like("public-header", csrf_local(json!({"q": "kittens", "aB3dE": "v1"})), short, None, Some(strs(&["x-csrf-token"])))
+        .await
+        .unwrap();
+    assert_eq!(
+        j(&header.operation.slots),
+        json!([{"param": "q", "at": ["query:q"]}, {"param": "q", "at": ["header:x-csrf-token", "json:/q"]}])
+    );
     assert_eq!(built(&header.operation, json!({"q": "puppies"}), &no_session()).headers["x-csrf-token"], r#"{"q":"puppies","aB3dE":"v1"}"#);
 }
 
@@ -499,11 +540,15 @@ async fn a_live_cookie_inside_a_public_container_is_a_reference_and_one_no_pass_
             ])
         );
         assert!(!spec_text(op).contains(A), "the cookie is in the spec");
-        assert_eq!(built(op, json!({"q": "puppies"}), &rotated).headers["x-csrf-token"], json!({"q": "puppies", "token": B, "flag": true}).to_string());
+        assert_eq!(
+            built(op, json!({"q": "puppies"}), &rotated).headers["x-csrf-token"],
+            json!({"q": "puppies", "token": B, "flag": true}).to_string()
+        );
     }
 
     // too short to be a reference, or in base64: the caller's word does not let a live cookie stay
-    let stuck: Vec<(Value, StoredCookie)> = vec![(json!({"stamp": "aB3dE4x"}), here("sess", "aB3dE4x")), (json!({"stamp": b64_encode(A.as_bytes())}), here("sess", A))];
+    let stuck: Vec<(Value, StoredCookie)> =
+        vec![(json!({"stamp": "aB3dE4x"}), here("sess", "aB3dE4x")), (json!({"stamp": b64_encode(A.as_bytes())}), here("sess", A))];
     for (inner, c) in stuck {
         let mut v = json!({"q": "kittens"});
         for (k, x) in inner.as_object().unwrap() {
@@ -552,7 +597,10 @@ fn a_container_that_is_a_session_value_with_only_refs_inside_is_one_ref_and_none
     // a header named like a credential: a cookie, an opaque key and a short cookie inside it
     let value = obj(&[("sid", json!(SID)), (OPAQUE, json!("leafValue42")), ("innerKey9", json!({"stamp": "aB3dE"}))]);
     let header = learn_with(csrf_local(value.clone()), cookies(), None, None).unwrap();
-    assert_eq!(j(&header.operation.slots), json!([{"param": "q", "at": ["query:q"]}, {"ref": "session:op/x-csrf-token", "at": ["header:x-csrf-token"]}]));
+    assert_eq!(
+        j(&header.operation.slots),
+        json!([{"param": "q", "at": ["query:q"]}, {"ref": "session:op/x-csrf-token", "at": ["header:x-csrf-token"]}])
+    );
     assert_eq!(header.operation.request.headers["x-csrf-token"], "");
     assert_eq!(j(&header.session_values), json!({"op/x-csrf-token": value.to_string()}));
     absent(&header.operation, &[SID, OPAQUE, "leafValue42", "innerKey9", "stamp", "aB3dE"]);
@@ -561,13 +609,17 @@ fn a_container_that_is_a_session_value_with_only_refs_inside_is_one_ref_and_none
 
     // a body the page's storage holds whole: a live field, a per-session field and a query id under an opaque key
     let body = obj(&[("sid", json!(SID)), ("csrf", json!("Ab3dEf9h")), (OPAQUE, json!({"doc_id": "123456789012"}))]).to_string();
-    let stored = learn_with(posted(&body, &format!("{LOCAL}?q=kittens")), cookies(), Some(storage(&[("savedRequest", &body)])), None).unwrap();
+    let stored =
+        learn_with(posted(&body, &format!("{LOCAL}?q=kittens")), cookies(), Some(storage(&[("savedRequest", &body)])), None).unwrap();
     assert_eq!(j(&stored.operation.slots), json!([{"param": "q", "at": ["query:q"]}, {"ref": "session:op/savedRequest", "at": ["body"]}]));
     assert_eq!(stored.operation.request.body.as_deref(), Some(""));
     assert_eq!(j(&stored.operation.volatile), json!([]));
     assert_eq!(j(&stored.session_values), json!({"op/savedRequest": body}));
     absent(&stored.operation, &[SID, OPAQUE, "Ab3dEf9h", "doc_id", "123456789012"]);
-    assert_eq!(built(&stored.operation, json!({"q": "puppies"}), &with_values(cookies(), &stored.session_values)).body.as_deref(), Some(body.as_str()));
+    assert_eq!(
+        built(&stored.operation, json!({"q": "puppies"}), &with_values(cookies(), &stored.session_values)).body.as_deref(),
+        Some(body.as_str())
+    );
 }
 
 #[test]
@@ -583,7 +635,8 @@ fn a_path_segment_that_is_a_reference_is_a_wildcard_in_the_match_as_a_params_is(
     // the session id rides in the path, with a dot so it does not look like a hash on its own
     let first = "u1.q2Fz9kLmT0vXYb7NcW1pReHs3JuQa8Df";
     let next = "u1.Zx9Qw8vLm7Kj6HgF5dS4aP3oI2uY1tRe";
-    let run = |sid: &str, q: &str| vec![get_with(&format!("https://api.site.test/api/{sid}/search?q={q}"), &[("cookie", &format!("sid={sid}"))])];
+    let run =
+        |sid: &str, q: &str| vec![get_with(&format!("https://api.site.test/api/{sid}/search?q={q}"), &[("cookie", &format!("sid={sid}"))])];
     let captured = run(first, "kittens");
     let mut i = input(captured.clone(), vec![json!({"q": "kittens"}), json!({"q": "puppies"})]);
     i.cookies = vec![cookie("sid", first)];
@@ -594,7 +647,10 @@ fn a_path_segment_that_is_a_reference_is_a_wildcard_in_the_match_as_a_params_is(
     assert_eq!(op.matcher.path.as_deref(), Some("/api/*/search"));
     assert!(matches(&op.matcher, &captured[0].request), "the match must fit the request it was learned from");
     assert!(!learned.warnings.iter().any(|w| w.contains("no matching request")), "{}", learned.warnings.join("\n"));
-    assert_eq!(built(op, json!({"q": "cats"}), &jar(vec![cookie("sid", next)])).url, format!("https://api.site.test/api/{next}/search?q=cats"));
+    assert_eq!(
+        built(op, json!({"q": "cats"}), &jar(vec![cookie("sid", next)])).url,
+        format!("https://api.site.test/api/{next}/search?q=cats")
+    );
 }
 
 /* ------------------------------------------------- query-id field names */
@@ -627,7 +683,11 @@ fn a_cookie_or_stored_value_is_a_reference_under_a_persisted_query_field_name_to
         let jar_ = learn_operation(&with(body(&[(name, json!(format!("v1:{A}")))]), None, vec![cookie("sid", A)])).unwrap();
         assert_eq!(last(&jar_.operation), json!({"ref": "cookie:sid", "at": at, "template": "v1:{cookie:sid}"}));
         // too short to template: the check refuses it there as anywhere else
-        assert_match(&err(&with(body(&[(name, json!("v1:secret123"))]), None, vec![cookie("sess", "secret123")])), &format!("body > json:/{name} holds the live cookie sess"), name);
+        assert_match(
+            &err(&with(body(&[(name, json!("v1:secret123"))]), None, vec![cookie("sess", "secret123")])),
+            &format!("body > json:/{name} holds the live cookie sess"),
+            name,
+        );
     }
 
     // so a hash the app keeps in storage is a reference as well, whatever it is kept as
@@ -646,19 +706,32 @@ fn a_cookie_or_stored_value_is_a_reference_under_a_persisted_query_field_name_to
     // control: a query id that is in no cookie and no storage stays a volatile anchor
     let plain = learn_operation(&with(body(&persisted()), Some(storage(&[("theme", "dark-mode")])), vec![])).unwrap().operation;
     assert_eq!(j(&plain.slots), json!([{"param": "q", "at": ["body", "json:/q"]}]));
-    assert_eq!(plain.volatile.iter().map(|v| v.at.clone()).collect::<Vec<_>>(), vec![strs(&["body", "json:/extensions/persistedQuery/sha256Hash"])]);
+    assert_eq!(
+        plain.volatile.iter().map(|v| v.at.clone()).collect::<Vec<_>>(),
+        vec![strs(&["body", "json:/extensions/persistedQuery/sha256Hash"])]
+    );
     assert!(plain.request.body.as_ref().unwrap().contains(hash), "the hash stays in the template for the cheap heal to swap");
 }
 
 /* ------------------------------------------- the check behind every pass */
 
-fn run_fields(fields: &[(&str, Value)], cookies: Vec<StoredCookie>, st: Option<IndexMap<String, String>>, public: Option<Vec<String>>) -> Result<Learned, anyhow::Error> {
+fn run_fields(
+    fields: &[(&str, Value)],
+    cookies: Vec<StoredCookie>,
+    st: Option<IndexMap<String, String>>,
+    public: Option<Vec<String>>,
+) -> Result<Learned, anyhow::Error> {
     let mut pairs = vec![("q", json!("kittens"))];
     pairs.extend(fields.iter().cloned());
     learn_with(post(&obj(&pairs).to_string(), &[]), cookies, st, public)
 }
 
-fn run_err(fields: &[(&str, Value)], cookies: Vec<StoredCookie>, st: Option<IndexMap<String, String>>, public: Option<Vec<String>>) -> String {
+fn run_err(
+    fields: &[(&str, Value)],
+    cookies: Vec<StoredCookie>,
+    st: Option<IndexMap<String, String>>,
+    public: Option<Vec<String>>,
+) -> String {
     format!("Error: {}", run_fields(fields, cookies, st, public).unwrap_err())
 }
 
@@ -667,7 +740,11 @@ fn learning_refuses_a_request_it_could_not_clear_of_a_live_value_in_any_encoding
     let cases: Vec<(&str, StoredCookie, (&str, Value))> = vec![
         ("a cookie too short to template, inside a longer leaf", cookie("sess", "secret123"), ("ctx", json!("v1:secret123"))),
         ("a cookie in base64", cookie("sid", SID), ("state", json!(b64_encode(format!("sid={SID}").as_bytes())))),
-        ("a cookie percent-encoded twice", cookie("sid", &format!("{SID}/=")), ("next", json!(enc(&format!("/cb?s={}", enc(&format!("{SID}/="))))))),
+        (
+            "a cookie percent-encoded twice",
+            cookie("sid", &format!("{SID}/=")),
+            ("next", json!(enc(&format!("/cb?s={}", enc(&format!("{SID}/=")))))),
+        ),
     ];
     for (label, c, field) in cases {
         let pattern = format!(r"keep a credential in the spec: body > json:/{} holds the live cookie {}\.", field.0, c.name);
@@ -675,9 +752,17 @@ fn learning_refuses_a_request_it_could_not_clear_of_a_live_value_in_any_encoding
     }
     // a session value the learner found by name counts too, where no pass reaches its second copy
     let fields = || [("csrf", json!("Ab3dEf9h")), ("ctx", json!("v1:Ab3dEf9h"))];
-    assert_match(&run_err(&fields(), vec![], None, None), r"keep a credential in the spec: body > json:/ctx holds the live session value csrf\.", "by name");
+    assert_match(
+        &run_err(&fields(), vec![], None, None),
+        r"keep a credential in the spec: body > json:/ctx holds the live session value csrf\.",
+        "by name",
+    );
     // ...and marking the per-session name public changes nothing: it is a reference all the same
-    assert_match(&run_err(&fields(), vec![], None, Some(strs(&["csrf", "ctx"]))), r"body > json:/ctx holds the live session value csrf\. No name marked public waives one", "public");
+    assert_match(
+        &run_err(&fields(), vec![], None, Some(strs(&["csrf", "ctx"]))),
+        r"body > json:/ctx holds the live session value csrf\. No name marked public waives one",
+        "public",
+    );
     // a cookie is one under any name: the header that holds it is refused though marked public
     let held = get_with("https://api.site.test/v1/search?q=kittens", &[("x-ctx", "v1:secret123")]);
     assert_match(
@@ -717,7 +802,11 @@ fn the_scan_finds_a_base64_copy_whatever_sits_before_it_and_of_a_value_too_short
 
     // and learning refuses both of the reviewer's cases
     for (value, state) in [("aB3dE4", "YUIzZEU0".to_string()), (T, format!("prefix{}", b64(T)))] {
-        assert_match(&run_err(&[("state", json!(state))], vec![cookie("sid", value)], None, None), r"keep a credential in the spec: body > json:/state holds the live cookie sid\.", value);
+        assert_match(
+            &run_err(&[("state", json!(state))], vec![cookie("sid", value)], None, None),
+            r"keep a credential in the spec: body > json:/state holds the live cookie sid\.",
+            value,
+        );
     }
 }
 
@@ -751,12 +840,19 @@ fn the_scan_reports_a_base64_copy_only_when_the_bytes_there_are_the_values() {
 #[test]
 fn the_check_knows_a_stored_credential_that_no_pass_made_a_reference_and_no_stored_setting() {
     const T: &str = "k7Qm9xLp3Rv8Tz1Wn5Ys6Ub4Hc2Jd0Fa";
-    let run = |fields: &[(&str, Value)], st: &[(&str, &str)], public: Option<Vec<String>>| run_fields(fields, vec![], Some(storage(st)), public);
-    let run_err = |fields: &[(&str, Value)], st: &[(&str, &str)], public: Option<Vec<String>>| format!("Error: {}", run(fields, st, public).unwrap_err());
+    let run =
+        |fields: &[(&str, Value)], st: &[(&str, &str)], public: Option<Vec<String>>| run_fields(fields, vec![], Some(storage(st)), public);
+    let run_err = |fields: &[(&str, Value)], st: &[(&str, &str)], public: Option<Vec<String>>| {
+        format!("Error: {}", run(fields, st, public).unwrap_err())
+    };
     let body_of = |l: &Learned| serde_json::from_str::<Value>(l.operation.request.body.as_ref().unwrap()).unwrap();
 
     // under a credential's name, and random-looking inside a JSON entry under an ordinary one
-    assert_match(&run_err(&[("state", json!(b64(T)))], &[("token", T)], None), r"keep a credential in the spec: body > json:/state holds the live session value storage:token\.", "token");
+    assert_match(
+        &run_err(&[("state", json!(b64(T)))], &[("token", T)], None),
+        r"keep a credential in the spec: body > json:/state holds the live session value storage:token\.",
+        "token",
+    );
     assert_match(
         &run_err(&[("state", json!(b64(T)))], &[("cache", &json!({"user": {"id": T}}).to_string())], None),
         r"body > json:/state holds the live session value storage:cache/user/id\.",
@@ -777,7 +873,8 @@ fn the_check_knows_a_stored_credential_that_no_pass_made_a_reference_and_no_stor
     let short = run(&[("ctx", json!("v1:Ab3dEf9h"))], &[("csrf", "Ab3dEf9h")], None).unwrap();
     assert_eq!(body_of(&short)["ctx"], json!("v1:Ab3dEf9h"));
     // ...and where the same value can be a reference it is one, as before
-    let referenced = run(&[("ctx", json!("ordinary-value")), ("state", json!(b64("ordinary-value")))], &[("token", "ordinary-value")], None).unwrap();
+    let referenced =
+        run(&[("ctx", json!("ordinary-value")), ("state", json!(b64("ordinary-value")))], &[("token", "ordinary-value")], None).unwrap();
     assert_eq!(last(&referenced.operation), json!({"ref": "session:op/token", "at": ["body", "json:/ctx"]}));
 
     // a setting is no credential, wherever else it turns up
@@ -788,13 +885,24 @@ fn the_check_knows_a_stored_credential_that_no_pass_made_a_reference_and_no_stor
     // ...also once a leaf that equals it has made it a reference: refreshable is not the same as secret
     let locale = "europe-berlin-posix";
     let sent = run(&[("locale", json!(locale)), ("state", json!(b64(locale)))], &[("locale", locale)], None).unwrap();
-    assert_eq!(j(&sent.operation.slots), json!([{"param": "q", "at": ["body", "json:/q"]}, {"ref": "session:op/locale", "at": ["body", "json:/locale"]}]));
+    assert_eq!(
+        j(&sent.operation.slots),
+        json!([{"param": "q", "at": ["body", "json:/q"]}, {"ref": "session:op/locale", "at": ["body", "json:/locale"]}])
+    );
     assert_eq!(body_of(&sent)["state"], json!(b64(locale)));
     // but under a credential's name in the request the same stored text is one
-    assert_match(&run_err(&[("token", json!(locale)), ("state", json!(b64(locale)))], &[("locale", locale)], None), "holds the live session value locale", "named token");
+    assert_match(
+        &run_err(&[("token", json!(locale)), ("state", json!(b64(locale)))], &[("locale", locale)], None),
+        "holds the live session value locale",
+        "named token",
+    );
 
     // a name marked public exempts no stored credential...
-    assert_match(&run_err(&[("state", json!(b64(T)))], &[("token", T)], Some(strs(&["state"]))), r"body > json:/state holds the live session value storage:token\.", "public state");
+    assert_match(
+        &run_err(&[("state", json!(b64(T)))], &[("token", T)], Some(strs(&["state"]))),
+        r"body > json:/state holds the live session value storage:token\.",
+        "public state",
+    );
     // ...and no stored setting from being a ref, but the name it is sent under no longer makes it a credential
     let waived = run(&[("token", json!(locale)), ("state", json!(b64(locale)))], &[("locale", locale)], Some(strs(&["token"]))).unwrap();
     assert_eq!(last(&waived.operation), json!({"ref": "session:op/locale", "at": ["body", "json:/token"]}));
@@ -808,7 +916,11 @@ fn the_check_knows_a_stored_credential_that_no_pass_made_a_reference_and_no_stor
     // a query-id field name exempts nothing: a stored hash sent there is a ref, and a copy of it elsewhere is found
     let hash = "e0f2a1b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f";
     assert_match(
-        &run_err(&[("extensions", json!({"persistedQuery": {"sha256Hash": hash}})), ("state", json!(b64(hash)))], &[("pq:Search", hash)], None),
+        &run_err(
+            &[("extensions", json!({"persistedQuery": {"sha256Hash": hash}})), ("state", json!(b64(hash)))],
+            &[("pq:Search", hash)],
+            None,
+        ),
         "body > json:/state holds the live session value .*pq:Search",
         "hash",
     );
@@ -829,7 +941,10 @@ async fn an_encoded_copy_of_a_setting_stored_under_a_credentials_key_is_kept_of_
         let op = add_like(&name, sent("solarized-dark"), vec![], Some(storage(&st)), Some(strs(&["ctx"]))).await.unwrap().operation;
         assert_eq!(j(&op.slots), json!([{"param": "q", "at": ["query:q"]}]));
         assert_eq!(export_site(&name, false).unwrap().secrets, Vec::<String>::new());
-        assert_eq!(built(&op, json!({"q": "puppies"}), &no_session()).url, format!("{LOCAL}?q=puppies&ctx={}", enc(&b64("solarized-dark"))));
+        assert_eq!(
+            built(&op, json!({"q": "puppies"}), &no_session()).url,
+            format!("{LOCAL}?q=puppies&ctx={}", enc(&b64("solarized-dark")))
+        );
     }
     let before = files_of("setting-refused");
     // the same shape with a value that looks like a credential itself, and with a cookie
@@ -839,7 +954,11 @@ async fn an_encoded_copy_of_a_setting_stored_under_a_credentials_key_is_kept_of_
         ("solarized-dark", vec![cookie("theme", "solarized-dark")], None, "cookie theme"),
     ];
     for (value, cookies, st, what) in refused {
-        assert_match(&add_err("setting-refused", sent(value), cookies, st, Some(strs(&["ctx"]))).await, &format!(r"query:ctx holds the live {what}\."), what);
+        assert_match(
+            &add_err("setting-refused", sent(value), cookies, st, Some(strs(&["ctx"]))).await,
+            &format!(r"query:ctx holds the live {what}\."),
+            what,
+        );
     }
     assert_eq!(files_of("setting-refused"), before, "a refused add writes nothing");
 }
@@ -879,7 +998,10 @@ fn the_text_beside_a_param_in_its_leaf_is_judged_by_the_leafs_name_as_a_whole_le
 
     // an opaque token is one under any name: a UUID beside the arg, under a name that says nothing
     assert_match(
-        &err(&input(vec![get(&format!("{search}kittens&ctx=kittens|550e8400-e29b-41d4-a716-446655440000"))], vec![json!({"q": "kittens"})])),
+        &err(&input(
+            vec![get(&format!("{search}kittens&ctx=kittens|550e8400-e29b-41d4-a716-446655440000"))],
+            vec![json!({"q": "kittens"})],
+        )),
         r"^Error: query:ctx holds a param inside text that is a credential \(an unbroken random-looking run",
         "uuid",
     );
@@ -917,7 +1039,10 @@ fn structured_text_beside_a_param_is_no_credential_whatever_the_leaf_is_called()
             "{cache_key}"
         );
         assert_eq!(j(&learned.session_values), json!({}));
-        assert_eq!(body_json(&built(&learned.operation, json!({"q": "tigers"}), &no_session())), json!({"q": "tigers", "cache_key": cache_key.replacen("kittens", "tigers", 1)}));
+        assert_eq!(
+            body_json(&built(&learned.operation, json!({"q": "tigers"}), &no_session())),
+            json!({"q": "tigers", "cache_key": cache_key.replacen("kittens", "tigers", 1)})
+        );
     }
 }
 
@@ -950,8 +1075,10 @@ fn two(exchanges: Vec<Exchange>, examples: Vec<Value>, exchanges2: Vec<Exchange>
 #[test]
 fn a_place_the_second_example_disproves_is_kept_as_the_constant_it_is_not_filled() {
     // "search" is the endpoint's own path segment and the first query; only the query follows in run 2
-    let run = |q: &str, headers: &[(&str, &str)]| vec![xhr_res("GET", &format!("https://site.test/api/search?q={q}"), headers, None, answer(q))];
-    let learned = learn_operation(&two(run("search", &[]), vec![json!({"q": "search"}), json!({"q": "kitten"})], run("kitten", &[]))).unwrap();
+    let run =
+        |q: &str, headers: &[(&str, &str)]| vec![xhr_res("GET", &format!("https://site.test/api/search?q={q}"), headers, None, answer(q))];
+    let learned =
+        learn_operation(&two(run("search", &[]), vec![json!({"q": "search"}), json!({"q": "kitten"})], run("kitten", &[]))).unwrap();
     let op = &learned.operation;
     assert_eq!(j(&op.slots), json!([{"param": "q", "at": ["query:q"]}]));
     assert_eq!(op.matcher.path.as_deref(), Some("/api/search"), "the segment is no param, so the match names it");
@@ -960,14 +1087,21 @@ fn a_place_the_second_example_disproves_is_kept_as_the_constant_it_is_not_filled
 
     // inside a longer leaf too: the header holds "search" by coincidence and never changes
     let app = [("x-app", "websearch-v2")];
-    let templated = learn_operation(&two(run("search", &app), vec![json!({"q": "search"}), json!({"q": "kitten"})], run("kitten", &app))).unwrap();
+    let templated =
+        learn_operation(&two(run("search", &app), vec![json!({"q": "search"}), json!({"q": "kitten"})], run("kitten", &app))).unwrap();
     assert_eq!(j(&templated.operation.slots), json!([{"param": "q", "at": ["query:q"]}]));
     assert_eq!(built(&templated.operation, json!({"q": "puppy"}), &no_session()).headers["x-app"], "websearch-v2");
 
     // a sibling endpoint with the richer answer fits the first match (/api/*) too: run 2 is read on run 1's own path
     let both = |q: &str| {
         let mut v = run(q, &[]);
-        v.push(xhr_res("GET", &format!("https://site.test/api/suggest?q={q}"), &[], None, json!({"suggestions": vec![json!({"text": format!("{q} and more")}); 40]})));
+        v.push(xhr_res(
+            "GET",
+            &format!("https://site.test/api/suggest?q={q}"),
+            &[],
+            None,
+            json!({"suggestions": vec![json!({"text": format!("{q} and more")}); 40]}),
+        ));
         v
     };
     let first = both("search");
@@ -995,7 +1129,12 @@ fn a_param_whose_every_place_the_second_example_disproves_is_a_failure_to_learn(
 fn run_2s_request_is_chosen_on_run_1s_evidence_a_request_that_does_not_answer_like_it_disproves_nothing() {
     // the path segment is the param; in run 2 the page also pings the first path, which only acknowledges
     let run1 = || vec![xhr_res("GET", "https://site.test/api/alpha?q=alpha", &[], None, answer("alpha"))];
-    let second = |stale: Value| vec![xhr_res("GET", "https://site.test/api/alpha?q=bravo", &[], None, stale), xhr_res("GET", "https://site.test/api/bravo?q=bravo", &[], None, answer("bravo"))];
+    let second = |stale: Value| {
+        vec![
+            xhr_res("GET", "https://site.test/api/alpha?q=bravo", &[], None, stale),
+            xhr_res("GET", "https://site.test/api/bravo?q=bravo", &[], None, answer("bravo")),
+        ]
+    };
     let recipe = || -> Box<dyn Fn(&Exchange) -> bool> { Box::new(|e: &Exchange| e.body().contains("\"results\"")) };
     let cases: Vec<(Value, Option<Box<dyn Fn(&Exchange) -> bool>>)> = vec![
         (json!({"success": true}), None),
@@ -1012,7 +1151,9 @@ fn run_2s_request_is_chosen_on_run_1s_evidence_a_request_that_does_not_answer_li
         assert_eq!(built(&op, json!({"q": "charlie"}), &no_session()).url, "https://site.test/api/charlie?q=charlie");
     }
     // a run 2 with nothing that answers like run 1 is no grounds for dropping a slot
-    let alone = learn_operation(&two(run1(), vec![json!({"q": "alpha"}), json!({"q": "bravo"})], second(json!({"success": true}))[..1].to_vec())).unwrap();
+    let alone =
+        learn_operation(&two(run1(), vec![json!({"q": "alpha"}), json!({"q": "bravo"})], second(json!({"success": true}))[..1].to_vec()))
+            .unwrap();
     assert_eq!(alone.operation.slots.len(), 2);
     assert!(
         alone.warnings.iter().any(|w| regex::Regex::new(r"run 2's matching request .* disproves nothing").unwrap().is_match(w)),
@@ -1035,7 +1176,9 @@ fn a_run_2_request_with_no_answer_or_an_error_for_one_is_no_data_answer_and_disp
         r.body = Some(r#"{"error":"no such list"}"#.into());
     }
     for old in [unanswered, failed] {
-        let op = learn_operation(&two(run1(), vec![json!({"q": "kittens"}), json!({"q": "puppies"})], vec![old.clone(), fresh.clone()])).unwrap().operation;
+        let op = learn_operation(&two(run1(), vec![json!({"q": "kittens"}), json!({"q": "puppies"})], vec![old.clone(), fresh.clone()]))
+            .unwrap()
+            .operation;
         assert_eq!(j(&op.slots), json!([{"param": "q", "at": ["path:1"]}, {"param": "q", "at": ["query:q"]}]));
         assert_eq!(built(&op, json!({"q": "tigers"}), &no_session()).url, "https://site.test/api/tigers?q=tigers");
         // alone, it may show a nonce but takes no slot away
@@ -1060,7 +1203,13 @@ fn a_read_the_caller_pinned_whose_own_answer_is_a_flag_is_its_own_counterpart_in
 // The visitor's own country rides along as gl=US on every request, whatever country is asked for.
 fn by_country(c: &str) -> Vec<Exchange> {
     vec![
-        xhr_res("GET", "https://api.site.test/v1/geo?gl=US", &[], None, json!({"stores": vec![json!({"city": "Springfield", "open": true}); 60]})),
+        xhr_res(
+            "GET",
+            "https://api.site.test/v1/geo?gl=US",
+            &[],
+            None,
+            json!({"stores": vec![json!({"city": "Springfield", "open": true}); 60]}),
+        ),
         xhr_res("GET", &format!("https://api.site.test/v1/top?country={c}&gl=US&lang=en-{c}"), &[], None, answer(&format!("top in {c}"))),
     ]
 }
@@ -1074,14 +1223,24 @@ fn a_short_example_is_placed_where_a_whole_leaf_equals_it_and_follows_a_differen
     let learned = learn_operation(&two(by_country("US"), vec![json!({"q": "US"}), json!({"q": "CA"})], by_country("CA"))).unwrap();
     assert_eq!(pathname(&learned.exchange.request.url), "/v1/top", "the request whose leaf follows, not the bigger one");
     assert_eq!(j(&learned.operation.slots), json!([{"param": "q", "at": ["query:country"]}]));
-    assert_eq!(built(&learned.operation, json!({"q": "DE"}), &no_session()).url, "https://api.site.test/v1/top?country=DE&gl=US&lang=en-US");
+    assert_eq!(
+        built(&learned.operation, json!({"q": "DE"}), &no_session()).url,
+        "https://api.site.test/v1/top?country=DE&gl=US&lang=en-US"
+    );
 
     // a page number: a JSON number beside another 2 that is no page
     let page = |n: u64| vec![post(&json!({"q": "kittens", "page": n, "size": 2}).to_string(), &[])];
-    let paged = learn_operation(&two(page(2), vec![json!({"q": "kittens", "page": 2}), json!({"q": "kittens", "page": 3})], page(3))).unwrap();
-    assert_eq!(j(&paged.operation.slots), json!([{"param": "q", "at": ["body", "json:/q"]}, {"param": "page", "at": ["body", "json:/page"]}]));
+    let paged =
+        learn_operation(&two(page(2), vec![json!({"q": "kittens", "page": 2}), json!({"q": "kittens", "page": 3})], page(3))).unwrap();
+    assert_eq!(
+        j(&paged.operation.slots),
+        json!([{"param": "q", "at": ["body", "json:/q"]}, {"param": "page", "at": ["body", "json:/page"]}])
+    );
     assert_eq!(paged.operation.params.iter().find(|p| p.name == "page").unwrap().kind.name(), "number");
-    assert_eq!(built(&paged.operation, json!({"q": "cats", "page": 7}), &no_session()).body.as_deref(), Some(r#"{"q":"cats","page":7,"size":2}"#));
+    assert_eq!(
+        built(&paged.operation, json!({"q": "cats", "page": 7}), &no_session()).body.as_deref(),
+        Some(r#"{"q":"cats","page":7,"size":2}"#)
+    );
     assert_eq!(paged.operation.min_tier, 1, "{}", paged.warnings.join("\n"));
 }
 
@@ -1100,8 +1259,15 @@ fn the_evidence_for_a_short_example_is_the_same_endpoint_in_run_2_not_any_reques
     assert_eq!(j(&learned.operation.slots), json!([{"param": "country", "at": ["query:country"]}]));
 
     // the same endpoint, allowing for path segments that are params themselves
-    let posts = |user: &str, page: u64| vec![xhr_res("GET", &format!("https://api.site.test/v1/users/{user}/posts?page={page}"), &[], None, records(3, user))];
-    let paged = learn_operation(&two(posts("alice", 2), vec![json!({"user": "alice", "page": 2}), json!({"user": "bobby", "page": 3})], posts("bobby", 3))).unwrap();
+    let posts = |user: &str, page: u64| {
+        vec![xhr_res("GET", &format!("https://api.site.test/v1/users/{user}/posts?page={page}"), &[], None, records(3, user))]
+    };
+    let paged = learn_operation(&two(
+        posts("alice", 2),
+        vec![json!({"user": "alice", "page": 2}), json!({"user": "bobby", "page": 3})],
+        posts("bobby", 3),
+    ))
+    .unwrap();
     assert_eq!(j(&paged.operation.slots), json!([{"param": "user", "at": ["path:2"]}, {"param": "page", "at": ["query:page"]}]));
     let top = |c: &str| vec![xhr_res("GET", &format!("https://api.site.test/v1/top/{c}"), &[], None, records(3, c))];
     let segment = learn_operation(&two(top("US"), vec![json!({"country": "US"}), json!({"country": "CA"})], top("CA"))).unwrap();
@@ -1133,7 +1299,11 @@ fn a_short_example_without_that_evidence_is_refused_with_a_hint_to_pass_a_second
 fn a_short_example_in_either_set_asks_whole_leaf_evidence_of_both() {
     // only the second example is short: it must not be placed inside en-US by way of the first
     let lang = |c: &str| vec![get(&format!("https://api.site.test/v1/top?lang=en-{c}"))];
-    assert_match(&err(&two(lang("USA"), vec![json!({"q": "USA"}), json!({"q": "US"})], lang("US"))), "no captured request carries the example values", "none");
+    assert_match(
+        &err(&two(lang("USA"), vec![json!({"q": "USA"}), json!({"q": "US"})], lang("US"))),
+        "no captured request carries the example values",
+        "none",
+    );
     let mut i = two(lang("USA"), vec![json!({"q": "USA"}), json!({"q": "US"})], lang("US"));
     i.matcher = Some(m(json!({"path": "/v1/top"})));
     assert_match(&err(&i), r#""q" \("USA"\) is not in the learned request.*whole leaf"#, "matched");

@@ -224,9 +224,11 @@ fn pick_one(item: &Value, named: &[PickEntry]) -> Value {
         let mut v = get_path(item, Some(&e.path));
         if let Some(r) = &e.re {
             v = match &v {
-                Some(Value::String(s)) => r.captures(s).ok().flatten().map(|c| {
-                    Value::String(c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().to_string()).unwrap_or_default())
-                }),
+                Some(Value::String(s)) => r
+                    .captures(s)
+                    .ok()
+                    .flatten()
+                    .map(|c| Value::String(c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().to_string()).unwrap_or_default())),
                 _ => None,
             };
         }
@@ -244,13 +246,7 @@ pub fn pick(value: &Value, paths: &[String]) -> Result<Value> {
     let named: Vec<PickEntry> = paths.iter().map(|p| pick_entry(p)).collect::<Result<_>>()?;
     let Value::Array(items) = value else { return Ok(pick_one(value, &named)) };
     // an item with none of the fields (a shelf, an ad, a logo entity) is not a result: drop it, not {}
-    Ok(Value::Array(
-        items
-            .iter()
-            .map(|x| pick_one(x, &named))
-            .filter(|x| !matches!(x, Value::Object(o) if o.is_empty()))
-            .collect(),
-    ))
+    Ok(Value::Array(items.iter().map(|x| pick_one(x, &named)).filter(|x| !matches!(x, Value::Object(o) if o.is_empty())).collect()))
 }
 
 /// `fields` values are "<css>" (text) or "<css>@attr"; an empty css means the item itself.
@@ -277,8 +273,7 @@ pub fn extract_html(body: &str, recipe: &HtmlRecipe) -> Result<Vec<IndexMap<Stri
             };
             if all {
                 let targets = if css.is_empty() { vec![el] } else { query_all(el, &css, false)? };
-                let vs: Vec<Value> =
-                    targets.iter().filter_map(value).filter(|v| !v.is_empty()).map(Value::String).collect();
+                let vs: Vec<Value> = targets.iter().filter_map(value).filter(|v| !v.is_empty()).map(Value::String).collect();
                 row.insert(name.clone(), Value::Array(vs));
             } else {
                 let target = if css.is_empty() { Some(el) } else { query_all(el, &css, false)?.into_iter().next() };
@@ -402,11 +397,7 @@ fn cut(v: &Value, budget: usize, total: usize) -> Option<Value> {
         let mut used: i64 = 2;
         for (i, (k, x)) in entries.iter().enumerate() {
             let c = cost[i];
-            let value = if (c.0 + c.1) as i64 <= cap {
-                Some((*x).clone())
-            } else {
-                cut(x, (cap - c.0 as i64).max(0) as usize, c.1)
-            };
+            let value = if (c.0 + c.1) as i64 <= cap { Some((*x).clone()) } else { cut(x, (cap - c.0 as i64).max(0) as usize, c.1) };
             let Some(value) = value else { continue };
             let vsize = if &value == *x { c.1 } else { size(&value) };
             let n = (c.0 + vsize) as i64 + if used > 2 { 1 } else { 0 };

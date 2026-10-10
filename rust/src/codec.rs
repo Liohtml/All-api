@@ -11,8 +11,7 @@
 //! string is base64 of JSON, as some apps pack their state into one query param).
 use crate::spec::{Escape, Request};
 use crate::util::{
-    as_text, b64_decode_lenient_str, b64_encode, b64url_encode, decode_loose, encode_uri_component, is_json_text,
-    json, json_escape, re,
+    as_text, b64_decode_lenient_str, b64_encode, b64url_encode, decode_loose, encode_uri_component, is_json_text, json, json_escape, re,
 };
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value};
@@ -195,8 +194,7 @@ fn locate(text: &str, pointer: &str) -> Result<(usize, usize)> {
     }
     let s = text.as_bytes();
     let mut start = skip_ws(s, 0);
-    let tokens: Vec<String> =
-        if pointer.is_empty() { vec![] } else { pointer[1..].split('/').map(unescape_token).collect() };
+    let tokens: Vec<String> = if pointer.is_empty() { vec![] } else { pointer[1..].split('/').map(unescape_token).collect() };
     for token in tokens {
         let mut found: Option<usize> = None;
         if start < s.len() && (s[start] == b'{' || s[start] == b'[') {
@@ -598,8 +596,7 @@ pub fn fill_slot_template(template: &str, vars: &Map<String, Value>, escape: Opt
     if escape.is_none() {
         return fill_template(template, vars);
     }
-    let escaped: Map<String, Value> =
-        vars.iter().map(|(k, v)| (k.clone(), Value::String(escape_value(v, escape)))).collect();
+    let escaped: Map<String, Value> = vars.iter().map(|(k, v)| (k.clone(), Value::String(escape_value(v, escape)))).collect();
     fill_template(template, &escaped)
 }
 
@@ -635,14 +632,7 @@ pub enum TemplatePart {
 
 /* ------------------------------------------------------------------- walk */
 
-fn visit_json(
-    s: &str,
-    i: usize,
-    ptr: &str,
-    at: &[Step],
-    out: &mut Vec<Leaf>,
-    repeated: &mut Vec<Vec<Step>>,
-) -> Result<()> {
+fn visit_json(s: &str, i: usize, ptr: &str, at: &[Step], out: &mut Vec<Leaf>, repeated: &mut Vec<Vec<Step>>) -> Result<()> {
     let b = s.as_bytes();
     let c = b[i];
     if c == b'{' || c == b'[' {
@@ -789,7 +779,6 @@ pub fn leaf_name(at: &[Step]) -> String {
 pub fn covers(at: &[Step], leaf: &[Step]) -> bool {
     let last = at.len() - 1;
     let deeper = leaf.get(last) == at.get(last) && leaf.len() > at.len();
-    let below = at[last].starts_with("json:")
-        && leaf.get(last).map(|l| l.starts_with(&format!("{}/", at[last]))).unwrap_or(false);
+    let below = at[last].starts_with("json:") && leaf.get(last).map(|l| l.starts_with(&format!("{}/", at[last]))).unwrap_or(false);
     at[..last].iter().enumerate().all(|(i, step)| leaf.get(i) == Some(step)) && (deeper || below)
 }

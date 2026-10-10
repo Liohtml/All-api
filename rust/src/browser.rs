@@ -1,11 +1,11 @@
 //! The browser layer: the installed Chrome over the DevTools protocol, one persistent profile per
 //! process. Produces raw Exchanges for the learner (tier 3 / create / heal) and runs tier-2 page fetches.
-use crate::cdp::{Cdp, Event, Filter, chrome_path, launch};
 pub use crate::cdp::ProfileInUse;
+use crate::cdp::{Cdp, Event, Filter, chrome_path, launch};
 use crate::classify::{Observed, bot_wall};
 use crate::session::site_of;
 use crate::spec::Request as Hop;
-use crate::types::{CaptureResult, Exchange, ExchangeResponse, Headers, SameSite, StoredCookie, StepAction, TriggerStep};
+use crate::types::{CaptureResult, Exchange, ExchangeResponse, Headers, SameSite, StepAction, StoredCookie, TriggerStep};
 use crate::util::{now_ms, parse_url};
 use anyhow::{Result, anyhow, bail};
 use indexmap::IndexMap;
@@ -107,7 +107,12 @@ impl Browser {
                     let _ = self.cdp.send(Some(&session), "Runtime.runIfWaitingForDebugger", json!({})).await;
                     return;
                 }
-                let at = Attached { target_id: t.clone(), session_id: session.clone(), opener_id: opener.clone(), url: info.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string() };
+                let at = Attached {
+                    target_id: t.clone(),
+                    session_id: session.clone(),
+                    opener_id: opener.clone(),
+                    url: info.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                };
                 let (waiter, run_tx) = {
                     let mut inner = self.inner.lock().unwrap();
                     if let Some(o) = &opener {
@@ -116,7 +121,10 @@ impl Browser {
                     inner.attached.insert(t.clone(), at.clone());
                     let waiter = inner.waiters.remove(&t);
                     let run_tx = if waiter.is_none() {
-                        opener.as_ref().and_then(|_| self_owner(&inner, &t)).and_then(|run| inner.runs.get(&run).cloned().map(|tx| (run, tx)))
+                        opener
+                            .as_ref()
+                            .and_then(|_| self_owner(&inner, &t))
+                            .and_then(|run| inner.runs.get(&run).cloned().map(|tx| (run, tx)))
                     } else {
                         None
                     };
@@ -174,7 +182,10 @@ impl Browser {
         let _one = self.creating.lock().await;
         let reuse = {
             let mut inner = self.inner.lock().unwrap();
-            let idx = inner.unclaimed.iter().position(|t| inner.attached.get(t).map(|a| a.url == "about:blank" || a.url.is_empty()).unwrap_or(false));
+            let idx = inner
+                .unclaimed
+                .iter()
+                .position(|t| inner.attached.get(t).map(|a| a.url == "about:blank" || a.url.is_empty()).unwrap_or(false));
             idx.map(|i| inner.unclaimed.remove(i)).and_then(|t| inner.attached.get(&t).cloned())
         };
         let at = match reuse {
@@ -196,7 +207,10 @@ impl Browser {
                 };
                 match already {
                     Some(a) => a,
-                    None => tokio::time::timeout(Duration::from_secs(15), rx).await.map_err(|_| anyhow!("the new page did not attach"))?.map_err(|_| anyhow!("the new page did not attach"))?,
+                    None => tokio::time::timeout(Duration::from_secs(15), rx)
+                        .await
+                        .map_err(|_| anyhow!("the new page did not attach"))?
+                        .map_err(|_| anyhow!("the new page did not attach"))?,
                 }
             }
         };
@@ -282,9 +296,9 @@ fn self_owner(inner: &BrowserInner, target: &str) -> Option<u64> {
         if let Some(run) = inner.owners.get(&t) {
             return Some(*run);
         }
-        match inner.opener_of.get(&t) {
-            Some(o) => t = o.clone(),
-            None => return None,
+        {
+            let o = inner.opener_of.get(&t)?;
+            t = o.clone()
         }
     }
     None
@@ -327,7 +341,14 @@ type SentRequest = (String, String, Option<String>);
 
 /// A page on an attached target, recording its requests from the start.
 fn new_page_on(browser: &Arc<Browser>, at: &Attached) -> Arc<Page> {
-    let page = Arc::new(Page { browser: browser.clone(), target_id: at.target_id.clone(), session_id: at.session_id.clone(), main_frame: Mutex::new(String::new()), closed: AtomicBool::new(false), requests: Mutex::new(HashMap::new()) });
+    let page = Arc::new(Page {
+        browser: browser.clone(),
+        target_id: at.target_id.clone(),
+        session_id: at.session_id.clone(),
+        main_frame: Mutex::new(String::new()),
+        closed: AtomicBool::new(false),
+        requests: Mutex::new(HashMap::new()),
+    });
     let mut rx = page.events();
     let weak = Arc::downgrade(&page);
     tokio::spawn(async move {
@@ -336,7 +357,11 @@ fn new_page_on(browser: &Arc<Browser>, at: &Attached) -> Arc<Page> {
             if ev.method == "Network.requestWillBeSent" {
                 let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
                 let req = ev.params.get("request").cloned().unwrap_or(Value::Null);
-                page.requests.lock().unwrap().entry(rid).or_default().push((req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string())));
+                page.requests.lock().unwrap().entry(rid).or_default().push((
+                    req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(),
+                    req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()),
+                ));
             }
         }
     });
@@ -441,7 +466,9 @@ impl Page {
             if left.is_zero() {
                 bail!("page.goto: Timeout {} ms exceeded loading {url}", timeout.as_millis());
             }
-            let Ok(Some(ev)) = tokio::time::timeout(left, rx.recv()).await else { bail!("page.goto: Timeout {} ms exceeded loading {url}", timeout.as_millis()) };
+            let Ok(Some(ev)) = tokio::time::timeout(left, rx.recv()).await else {
+                bail!("page.goto: Timeout {} ms exceeded loading {url}", timeout.as_millis())
+            };
             if ev.method == "Page.lifecycleEvent" {
                 let name = ev.params.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let f = ev.params.get("frameId").and_then(|n| n.as_str()).unwrap_or("");
@@ -463,7 +490,11 @@ impl Page {
     pub async fn evaluate(&self, expression: &str) -> Result<Value> {
         let r = self.send("Runtime.evaluate", json!({ "expression": expression, "awaitPromise": true, "returnByValue": true })).await?;
         if let Some(ex) = r.get("exceptionDetails") {
-            let text = ex.pointer("/exception/description").and_then(|d| d.as_str()).or_else(|| ex.get("text").and_then(|t| t.as_str())).unwrap_or("evaluation failed");
+            let text = ex
+                .pointer("/exception/description")
+                .and_then(|d| d.as_str())
+                .or_else(|| ex.get("text").and_then(|t| t.as_str()))
+                .unwrap_or("evaluation failed");
             bail!("{text}");
         }
         Ok(r.pointer("/result/value").cloned().unwrap_or(Value::Null))
@@ -515,7 +546,8 @@ impl Page {
         }
         self.send("Input.dispatchMouseEvent", json!({ "type": "mouseMoved", "x": x, "y": y })).await?;
         self.send("Input.dispatchMouseEvent", json!({ "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1 })).await?;
-        self.send("Input.dispatchMouseEvent", json!({ "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1 })).await?;
+        self.send("Input.dispatchMouseEvent", json!({ "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1 }))
+            .await?;
         Ok(())
     }
 
@@ -549,7 +581,8 @@ impl Page {
             k if k.chars().count() == 1 => ("", k.to_uppercase().chars().next().unwrap() as u32, Some(k.to_string())),
             k => (k, 0, None),
         };
-        let mut down = json!({ "type": if text.is_some() { "keyDown" } else { "rawKeyDown" }, "key": key, "code": code, "windowsVirtualKeyCode": vk });
+        let mut down =
+            json!({ "type": if text.is_some() { "keyDown" } else { "rawKeyDown" }, "key": key, "code": code, "windowsVirtualKeyCode": vk });
         if let Some(t) = &text {
             down["text"] = json!(t);
             down["unmodifiedText"] = json!(t);
@@ -664,10 +697,14 @@ pub async fn close_browser() {
 pub fn site_cookies(cookies: &[StoredCookie], url: &str) -> Vec<StoredCookie> {
     let Some(u) = parse_url(url) else { return vec![] };
     let site = site_of(u.host_str().unwrap_or(""));
-    cookies.iter().filter(|c| {
-        let d = c.domain.trim_start_matches('.');
-        d == site || d.ends_with(&format!(".{site}"))
-    }).cloned().collect()
+    cookies
+        .iter()
+        .filter(|c| {
+            let d = c.domain.trim_start_matches('.');
+            d == site || d.ends_with(&format!(".{site}"))
+        })
+        .cloned()
+        .collect()
 }
 
 /// The profile's current cookies for url's site: the cheap auth refresh, no page load.
@@ -710,10 +747,13 @@ pub async fn clear_profile_cookies(site: &str, profile_dir: &Path) -> Result<()>
     let _h = hold();
     let b = open_browser(profile_dir, true).await?;
     let all = b.all_cookies().await?;
-    let mine: Vec<&StoredCookie> = all.iter().filter(|c| {
-        let d = c.domain.trim_start_matches('.');
-        d == site || d.ends_with(&format!(".{site}"))
-    }).collect();
+    let mine: Vec<&StoredCookie> = all
+        .iter()
+        .filter(|c| {
+            let d = c.domain.trim_start_matches('.');
+            d == site || d.ends_with(&format!(".{site}"))
+        })
+        .collect();
     if mine.is_empty() {
         return Ok(());
     }
@@ -752,7 +792,17 @@ pub struct TriggerOptions {
 
 impl TriggerOptions {
     pub fn new(url: &str, profile_dir: &Path) -> TriggerOptions {
-        TriggerOptions { url: url.to_string(), steps: None, soft_from: None, headless: true, profile_dir: profile_dir.to_path_buf(), intercept: None, matcher: None, settle_ms: None, timeout_ms: None }
+        TriggerOptions {
+            url: url.to_string(),
+            steps: None,
+            soft_from: None,
+            headless: true,
+            profile_dir: profile_dir.to_path_buf(),
+            intercept: None,
+            matcher: None,
+            settle_ms: None,
+            timeout_ms: None,
+        }
     }
 }
 
@@ -841,7 +891,12 @@ impl Run {
         let Some(&d) = cap.docs.last() else { return false };
         let ex = &cap.exchanges[d];
         let Some(r) = &ex.response else { return false };
-        bot_wall(&Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: None }, false, None).is_some()
+        bot_wall(
+            &Observed { status: r.status, headers: r.headers.clone(), body: r.body.clone().unwrap_or_default(), url: None },
+            false,
+            None,
+        )
+        .is_some()
     }
 
     /// `walled`, once the latest document's body is in (bounded: a stuck read is not a wall)
@@ -895,10 +950,13 @@ impl Run {
         if let Some(m) = matcher {
             // The op's own request answering is the signal; then a short settle.
             // A page quiet for a few seconds without it is not going to send it (a login wall, a 404 page).
-            while tokio::time::Instant::now() < self.deadline && !self.answered(m) && !{
-                let cap = self.cap.lock().unwrap();
-                Self::quiet(&cap) && now_ms() - cap.last_activity > MATCH_GRACE_MS
-            } {
+            while tokio::time::Instant::now() < self.deadline
+                && !self.answered(m)
+                && !{
+                    let cap = self.cap.lock().unwrap();
+                    Self::quiet(&cap) && now_ms() - cap.last_activity > MATCH_GRACE_MS
+                }
+            {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             tokio::time::sleep(Duration::from_millis(settle_ms)).await;
@@ -958,7 +1016,9 @@ impl Run {
             // A pause that names no network id (a deferred fetchLater) may still be a request the
             // network reported: the latest unanswered one of its method and URL.
             let reported = network_id.as_ref().map(|n| cap.by_req.get(n).copied()).unwrap_or_else(|| {
-                cap.exchanges.iter().rposition(|e| !e.aborted && e.response.is_none() && e.request.method == ex.request.method && e.request.url == ex.request.url)
+                cap.exchanges.iter().rposition(|e| {
+                    !e.aborted && e.response.is_none() && e.request.method == ex.request.method && e.request.url == ex.request.url
+                })
             });
             match reported {
                 Some(idx) => cap.exchanges[idx].aborted = true,
@@ -982,7 +1042,13 @@ const WS_DROP: &str = "(()=>{try{WebSocket.prototype.send=function(){};}catch(e)
 /// Whether the guard drops WebSocket messages: a chat "send" goes over an open socket, where no HTTP interception sees it.
 fn drops_sockets(run: &Run) -> bool {
     let Some(intercept) = &run.intercept else { return false };
-    let probe = Exchange { id: 0, resource_type: "websocket".into(), request: Hop { method: "SEND".into(), url: String::new(), headers: Headers::new(), body: None }, response: None, aborted: false };
+    let probe = Exchange {
+        id: 0,
+        resource_type: "websocket".into(),
+        request: Hop { method: "SEND".into(), url: String::new(), headers: Headers::new(), body: None },
+        response: None,
+        aborted: false,
+    };
     intercept(&probe, false, None) && intercept(&probe, true, None)
 }
 
@@ -1052,7 +1118,8 @@ fn decode_post(entries: Option<&Value>, encoding: &str, fallback: Option<String>
         } else if enc.contains("br") {
             brotli::Decompressor::new(&b[..], 4096).read_to_end(&mut out).is_ok()
         } else {
-            flate2::read::ZlibDecoder::new(&b[..]).read_to_end(&mut out).is_ok() || flate2::read::DeflateDecoder::new(&b[..]).read_to_end(&mut out).is_ok()
+            flate2::read::ZlibDecoder::new(&b[..]).read_to_end(&mut out).is_ok()
+                || flate2::read::DeflateDecoder::new(&b[..]).read_to_end(&mut out).is_ok()
         };
         if ok && !out.is_empty() {
             return Some(String::from_utf8_lossy(&out).into_owned());
@@ -1078,16 +1145,34 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                             if cap.exchanges[idx].response.is_none() && !cap.stopped_hops.contains(&rid) {
                                 let headers = lower_headers(redirect.get("headers"));
                                 let ct = headers.get("content-type").cloned().unwrap_or_default();
-                                cap.exchanges[idx].response = Some(ExchangeResponse { status: redirect.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16, headers, body: None, content_type: ct });
+                                cap.exchanges[idx].response = Some(ExchangeResponse {
+                                    status: redirect.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16,
+                                    headers,
+                                    body: None,
+                                    content_type: ct,
+                                });
                             }
                         }
                     }
-                    let url = format!("{}{}", req.get("url").and_then(|u| u.as_str()).unwrap_or(""), req.get("urlFragment").and_then(|u| u.as_str()).unwrap_or(""));
+                    let url = format!(
+                        "{}{}",
+                        req.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                        req.get("urlFragment").and_then(|u| u.as_str()).unwrap_or("")
+                    );
                     let headers = lower_headers(req.get("headers"));
                     let encoding = headers.get("content-encoding").cloned().unwrap_or_default();
-                    let body = decode_post(req.get("postDataEntries"), &encoding, req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()));
+                    let body = decode_post(
+                        req.get("postDataEntries"),
+                        &encoding,
+                        req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()),
+                    );
                     let kind = resource_type(p.get("type"));
-                    let request = Hop { method: req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), url: url.clone(), headers, body };
+                    let request = Hop {
+                        method: req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(),
+                        url: url.clone(),
+                        headers,
+                        body,
+                    };
                     let idx = match cap.aborted_ids.remove(&rid) {
                         // the guard recorded it from the pause: this is the same request, fully reported
                         Some(idx) => {
@@ -1137,7 +1222,8 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                         cap.pending.insert(rid.clone(), now);
                         cap.last_activity = now;
                     }
-                    let fetch_post = req.get("hasPostData").and_then(|b| b.as_bool()).unwrap_or(false) && cap.exchanges[idx].request.body.is_none();
+                    let fetch_post =
+                        req.get("hasPostData").and_then(|b| b.as_bool()).unwrap_or(false) && cap.exchanges[idx].request.body.is_none();
                     drop(cap);
                     if fetch_post {
                         let run2 = run.clone();
@@ -1178,7 +1264,10 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                             headers.insert(k, v);
                         }
                     }
-                    let ct = headers.get("content-type").cloned().unwrap_or_else(|| res.get("mimeType").and_then(|m| m.as_str()).unwrap_or("").to_string());
+                    let ct = headers
+                        .get("content-type")
+                        .cloned()
+                        .unwrap_or_else(|| res.get("mimeType").and_then(|m| m.as_str()).unwrap_or("").to_string());
                     let status = res.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
                     cap.exchanges[idx].response = Some(ExchangeResponse { status, headers, body: None, content_type: ct });
                     let kind = cap.exchanges[idx].resource_type.clone();
@@ -1263,7 +1352,11 @@ fn watch_page(run: Arc<Run>, page: Arc<Page>, first: bool) {
                         resource_type: resource_type(p.get("resourceType")),
                         request: Hop {
                             method: req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(),
-                            url: format!("{}{}", req.get("url").and_then(|u| u.as_str()).unwrap_or(""), req.get("urlFragment").and_then(|u| u.as_str()).unwrap_or("")),
+                            url: format!(
+                                "{}{}",
+                                req.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                                req.get("urlFragment").and_then(|u| u.as_str()).unwrap_or("")
+                            ),
                             headers: lower_headers(req.get("headers")),
                             body: req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()),
                         },
@@ -1314,7 +1407,9 @@ async fn within<T>(fut: impl std::future::Future<Output = Result<T>>, ms: u64) -
 }
 
 async fn run_step(page: &Page, s: &TriggerStep, timeout: Duration) -> Result<()> {
-    let need = |v: &Option<String>, what: &str| -> Result<String> { v.clone().filter(|x| !x.is_empty()).ok_or_else(|| anyhow!("trigger step \"{}\" needs {what}", s.action.name())) };
+    let need = |v: &Option<String>, what: &str| -> Result<String> {
+        v.clone().filter(|x| !x.is_empty()).ok_or_else(|| anyhow!("trigger step \"{}\" needs {what}", s.action.name()))
+    };
     match s.action {
         StepAction::Click => page.click(&need(&s.selector, "a selector")?, timeout).await,
         StepAction::Fill => page.fill(&need(&s.selector, "a selector")?, s.value.as_deref().unwrap_or(""), timeout).await,
@@ -1328,7 +1423,12 @@ async fn run_step(page: &Page, s: &TriggerStep, timeout: Duration) -> Result<()>
             }
         }
         StepAction::Goto => {
-            let url = s.value.clone().or_else(|| s.selector.clone()).filter(|x| !x.is_empty()).ok_or_else(|| anyhow!("trigger step \"goto\" needs a url in value"))?;
+            let url = s
+                .value
+                .clone()
+                .or_else(|| s.selector.clone())
+                .filter(|x| !x.is_empty())
+                .ok_or_else(|| anyhow!("trigger step \"goto\" needs a url in value"))?;
             page.navigate(&url, None, timeout).await
         }
     }
@@ -1400,7 +1500,8 @@ async fn run_inner(run: &Arc<Run>, page: &Arc<Page>, o: &TriggerOptions, timeout
         );
         let _ = within(page.evaluate(&routing), SEAL_MS).await;
         run.idle(5000).await;
-        let routed = run.cap.lock().unwrap().exchanges[before..].iter().any(|e| ["xhr", "fetch", "document"].contains(&e.resource_type.as_str()));
+        let routed =
+            run.cap.lock().unwrap().exchanges[before..].iter().any(|e| ["xhr", "fetch", "document"].contains(&e.resource_type.as_str()));
         if !routed {
             page.navigate(&o.url, Some(&from_url), timeout).await?;
         }
@@ -1443,7 +1544,13 @@ async fn run_inner(run: &Arc<Run>, page: &Arc<Page>, o: &TriggerOptions, timeout
     let cookies = site_cookies(&run.browser.all_cookies().await.unwrap_or_default(), &o.url);
     let final_url = page.url().await;
     let cap = run.cap.lock().unwrap();
-    Ok(CaptureResult { exchanges: cap.exchanges.clone(), cookies, final_url, storage: Some(storage), locations: Some(cap.locations.clone()) })
+    Ok(CaptureResult {
+        exchanges: cap.exchanges.clone(),
+        cookies,
+        final_url,
+        storage: Some(storage),
+        locations: Some(cap.locations.clone()),
+    })
 }
 
 /// The end of a run: a guarded run's pages are emptied before they are closed, with the guards
@@ -1455,7 +1562,8 @@ async fn close_pages(run: &Arc<Run>) -> bool {
         let mut emptied: HashSet<String> = HashSet::new();
         let end = tokio::time::Instant::now() + Duration::from_millis(3 * SEAL_MS);
         while tokio::time::Instant::now() < end {
-            let fresh: Vec<Arc<Page>> = run.pages.lock().unwrap().iter().filter(|p| !emptied.contains(&p.target_id) && !p.is_closed()).cloned().collect();
+            let fresh: Vec<Arc<Page>> =
+                run.pages.lock().unwrap().iter().filter(|p| !emptied.contains(&p.target_id) && !p.is_closed()).cloned().collect();
             for p in &fresh {
                 emptied.insert(p.target_id.clone());
                 // A round trip through the new document, then through the browser: whatever the old
@@ -1574,7 +1682,10 @@ async fn origin_page(browser: &Arc<Browser>, origin: &str, left: Duration) -> Re
 
 /// The redirect a page's manual fetch() got, read from what the browser saw of it: the page itself
 /// is told nothing, not even the status.
-async fn redirect_of(seen: &Arc<Mutex<Vec<(String, String, Option<String>, u16, Headers)>>>, hop: &Hop, url: &str) -> Result<HopAnswer> {
+/// a response the page's own fetch got: request id, URL, the id it was redirected from, status, headers
+type Seen = Arc<Mutex<Vec<(String, String, Option<String>, u16, Headers)>>>;
+
+async fn redirect_of(seen: &Seen, hop: &Hop, url: &str) -> Result<HopAnswer> {
     let bare = |u: &str| u.split('#').next().unwrap_or("").to_string();
     let mine = || -> Vec<(u16, Headers)> {
         seen.lock()
@@ -1599,7 +1710,8 @@ async fn redirect_of(seen: &Arc<Mutex<Vec<(String, String, Option<String>, u16, 
         }
         answers = now;
     }
-    let distinct: HashSet<String> = answers.iter().map(|(s, h)| format!("{s} {}", h.get("location").cloned().unwrap_or_default())).collect();
+    let distinct: HashSet<String> =
+        answers.iter().map(|(s, h)| format!("{s} {}", h.get("location").cloned().unwrap_or_default())).collect();
     if distinct.len() != 1 {
         let why = if answers.is_empty() {
             "its answer was not seen, so where it leads is unknown"
@@ -1614,7 +1726,7 @@ async fn redirect_of(seen: &Arc<Mutex<Vec<(String, String, Option<String>, u16, 
 }
 
 async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64) -> Result<HopAnswer> {
-    let seen: Arc<Mutex<Vec<(String, String, Option<String>, u16, Headers)>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let mut rx = page.events();
     let seen2 = seen.clone();
     let page2 = page.clone();
@@ -1623,7 +1735,14 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
         // A request the page sent before this fetch (its own copy of the same one) is in the page's
         // record; the page records the hop after a redirect too, so the answered hop is found by its URL.
         let known = |requests: &HashMap<String, SentRequest>, rid: &str, url: &str| {
-            requests.get(rid).cloned().or_else(|| page2.requests.lock().unwrap().get(rid).and_then(|hops| hops.iter().rev().find(|(_, u, _)| u == url).or(hops.first()).cloned()))
+            requests.get(rid).cloned().or_else(|| {
+                page2
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .get(rid)
+                    .and_then(|hops| hops.iter().rev().find(|(_, u, _)| u == url).or(hops.first()).cloned())
+            })
         };
         while let Some(ev) = rx.recv().await {
             let rid = ev.params.get("requestId").and_then(|r| r.as_str()).unwrap_or("").to_string();
@@ -1638,7 +1757,14 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
                             }
                         }
                     }
-                    requests.insert(rid, (req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(), req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string())));
+                    requests.insert(
+                        rid,
+                        (
+                            req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string(),
+                            req.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                            req.get("postData").and_then(|b| b.as_str()).map(|s| s.to_string()),
+                        ),
+                    );
                 }
                 "Network.responseReceived" => {
                     let res = ev.params.get("response").cloned().unwrap_or(Value::Null);
@@ -1664,13 +1790,17 @@ async fn fetch_once(page: &Arc<Page>, hop: &Hop, left: Duration, timeout_ms: u64
             }
         }
     });
-    let headers: serde_json::Map<String, Value> = hop.headers.iter().filter(|(k, _)| !k.starts_with(':')).map(|(k, v)| (k.clone(), json!(v))).collect();
+    let headers: serde_json::Map<String, Value> =
+        hop.headers.iter().filter(|(k, _)| !k.starts_with(':')).map(|(k, v)| (k.clone(), json!(v))).collect();
     let script = format!(
         "(async () => {{ const r = await fetch({url}, {{ method: {method}, headers: {headers}, body: {body}, credentials: 'include', redirect: 'manual', signal: AbortSignal.timeout({left}) }}); if (r.type === 'opaqueredirect') return {{ opaque: true, url: r.url }}; const h = {{}}; r.headers.forEach((v, k) => {{ h[k] = v; }}); return {{ opaque: false, status: r.status, headers: h, body: await r.text(), url: r.url }}; }})()",
         url = json!(hop.url),
         method = json!(hop.method),
         headers = Value::Object(headers),
-        body = match &hop.body { Some(b) => json!(b), None => Value::Null },
+        body = match &hop.body {
+            Some(b) => json!(b),
+            None => Value::Null,
+        },
         left = left.as_millis()
     );
     let r = tokio::time::timeout(left + Duration::from_millis(1000), page.evaluate(&script)).await;
@@ -1721,7 +1851,11 @@ pub async fn page_fetch(o: PageFetchOptions) -> Result<PageFetchResult> {
             Ok(a) => a,
             Err(e) => {
                 let m = e.to_string();
-                if !o.retry_on_navigation || !(m.contains("Execution context was destroyed") || m.to_lowercase().contains("navigat") || m.contains("Cannot find context")) {
+                if !o.retry_on_navigation
+                    || !(m.contains("Execution context was destroyed")
+                        || m.to_lowercase().contains("navigat")
+                        || m.contains("Cannot find context"))
+                {
                     return Err(e);
                 }
                 // it may have landed on another origin (a challenge's redirect): start from a fresh page on ours
@@ -1743,11 +1877,25 @@ pub async fn page_fetch(o: PageFetchOptions) -> Result<PageFetchResult> {
         };
         let ms = (now_ms() - t0).round() as u64;
         let Some(location) = answer.location.clone() else {
-            return Ok(PageFetchResult { status: answer.status, headers: answer.headers, body: answer.body, url: answer.url, ms, redirected });
+            return Ok(PageFetchResult {
+                status: answer.status,
+                headers: answer.headers,
+                body: answer.body,
+                url: answer.url,
+                ms,
+                redirected,
+            });
         };
         redirected = true;
         let Some(redirect) = &o.redirect else {
-            return Ok(PageFetchResult { status: answer.status, headers: answer.headers, body: answer.body, url: answer.url, ms, redirected });
+            return Ok(PageFetchResult {
+                status: answer.status,
+                headers: answer.headers,
+                body: answer.body,
+                url: answer.url,
+                ms,
+                redirected,
+            });
         };
         hop = redirect(&hop, answer.status, &location, hops)?;
         hops += 1;

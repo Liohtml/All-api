@@ -365,9 +365,10 @@ fn t7_page_fetch_runs_fetch_on_the_site_origin_with_the_profiles_cookies() {
         let mut headers = Headers::new();
         headers.insert("x-csrf-token".into(), CSRF.lock().unwrap().clone());
         headers.insert("authorization".into(), PUBLIC_BEARER.into());
+        let gql_url = GQL_URL.lock().unwrap().clone();
         let r = page_fetch(PageFetchOptions {
             origin: fx.url.clone(),
-            url: GQL_URL.lock().unwrap().clone(),
+            url: gql_url,
             method: "GET".into(),
             headers,
             body: None,

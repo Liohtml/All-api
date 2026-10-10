@@ -147,7 +147,7 @@ fn two_signed_in_profiles_refuses_to_guess_not_the_most_recently_used_listing_ea
         ])
     );
     // a known site's loginCookies narrow it the same way: both hold them, so still no guess
-    let e = import_from_browsers("https://reddit.com", Some(&names(&["reddit_session"])), None).err().expect("a refusal");
+    let e = import_from_browsers("https://reddit.com", Some(&names(&["reddit_session"])), None).expect_err("a refusal");
     assert!(e.downcast_ref::<AmbiguousProfile>().is_some(), "{e}");
     // the human's pick is honoured, and the chosen profile's name comes back for printing
     let r = import_from_browsers("https://reddit.com", None, Some(&pin(Some("Chrome"), "Profile 1"))).unwrap().expect("an import");
@@ -180,7 +180,7 @@ fn profile_pin_overrides_selection_a_missing_pin_throws() {
             .as_deref(),
         Some("differentprofilexx")
     );
-    let e = import_from_browsers("https://linkedin.com", None, Some(&pin(Some("chrome"), "Nope"))).err().expect("a missing pin throws");
+    let e = import_from_browsers("https://linkedin.com", None, Some(&pin(Some("chrome"), "Nope"))).expect_err("a missing pin throws");
     assert!(e.to_string().contains("no browser profile"), "{e}");
 }
 

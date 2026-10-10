@@ -28,10 +28,13 @@ pub fn mcp_next(next: &str) -> String {
     let out = ALLOW.replacen(next, 1, "ask the user to restart this MCP server with --allow-writes");
     let out = OPS.replace_all(&out, "list_operations {\"site\":\"$1\"}");
     let out = SITES.replace_all(&out, "list_sites");
-    let out = LOGIN.replace_all(&out, "the login tool {\"site\":\"$1\"} (mode \"window\" when the user must sign in or clear a challenge by hand)");
+    let out = LOGIN
+        .replace_all(&out, "the login tool {\"site\":\"$1\"} (mode \"window\" when the user must sign in or clear a challenge by hand)");
     let out = ADD.replacen(&out, 1, "a new site is added with the CLI");
     if CLI_ONLY.is_match(&out) {
-        format!("{out} (api-anything is a CLI: run it in your shell, as npx -y github:goodnight000/api-anything when the command is not installed; with no shell, ask the user)")
+        format!(
+            "{out} (api-anything is a CLI: run it in your shell, as npx -y github:goodnight000/api-anything when the command is not installed; with no shell, ask the user)"
+        )
     } else {
         out.into_owned()
     }
@@ -52,7 +55,8 @@ pub fn as_table(data: &Value) -> Value {
             }
         }
     }
-    let rows: Vec<Value> = items.iter().map(|x| Value::Array(columns.iter().map(|c| x.get(c).cloned().unwrap_or(Value::Null)).collect())).collect();
+    let rows: Vec<Value> =
+        items.iter().map(|x| Value::Array(columns.iter().map(|c| x.get(c).cloned().unwrap_or(Value::Null)).collect())).collect();
     json!({ "columns": columns, "rows": rows })
 }
 
@@ -127,7 +131,11 @@ impl Server {
             Ok(r) => r,
             Err(e) => {
                 let msg = first_line(&e.to_string());
-                let next = if msg.contains("invalid site name") || msg.contains("no site") { "list_sites" } else { "fix or delete the file named in error, then retry once" };
+                let next = if msg.contains("invalid site name") || msg.contains("no site") {
+                    "list_sites"
+                } else {
+                    "fix or delete the file named in error, then retry once"
+                };
                 reply(json!({ "ok": false, "error": msg, "next": next }), true)
             }
         }
@@ -157,7 +165,9 @@ impl Server {
             }
             "list_operations" => {
                 let site = s("site").unwrap_or_default();
-                let Some(r) = load_site(&site)? else { return Ok(reply(json!({ "error": format!("no site \"{site}\""), "next": "list_sites" }), true)) };
+                let Some(r) = load_site(&site)? else {
+                    return Ok(reply(json!({ "error": format!("no site \"{site}\""), "next": "list_sites" }), true));
+                };
                 let notes = site_notes(&r.site.name);
                 let operations: Vec<Value> = r
                     .site
@@ -224,7 +234,9 @@ impl Server {
                 Ok(reply(v, !r.ok))
             }
             "login" => {
-                let Some(target) = s("site").or_else(|| s("url")) else { return Ok(reply(json!({ "error": "give a site or a url" }), true)) };
+                let Some(target) = s("site").or_else(|| s("url")) else {
+                    return Ok(reply(json!({ "error": "give a site or a url" }), true));
+                };
                 let t = match resolve_login_target(&target) {
                     Ok(t) => t,
                     Err(e) => return Ok(reply(json!({ "error": e.to_string(), "next": "list_sites" }), true)),
@@ -240,7 +252,10 @@ impl Server {
                         sess.source = Some("window".into());
                         save_session(&t.site, &sess)
                     })?;
-                    return Ok(reply(json!({ "ok": true, "site": t.site, "source": "window", "cookies": cookie_names(&cookies), "loggedIn": is_logged_in(&cookies, t.login_cookies.as_deref()) }), false));
+                    return Ok(reply(
+                        json!({ "ok": true, "site": t.site, "source": "window", "cookies": cookie_names(&cookies), "loggedIn": is_logged_in(&cookies, t.login_cookies.as_deref()) }),
+                        false,
+                    ));
                 }
                 // An agent may be acting on injected page text: it may only refresh a known site's session from
                 // the profile a human already picked, never pull another domain's or another account's cookies.
@@ -251,12 +266,26 @@ impl Server {
                         true,
                     ));
                 };
-                let imported = match import_session(&t.site, &t.url, ImportOptions { login_cookies: t.login_cookies.clone(), profile: Some(source.clone()), file: None, push_profile: true }).await {
+                let imported = match import_session(
+                    &t.site,
+                    &t.url,
+                    ImportOptions { login_cookies: t.login_cookies.clone(), profile: Some(source.clone()), file: None, push_profile: true },
+                )
+                .await
+                {
                     Ok(i) => i,
-                    Err(e) => return Ok(reply(json!({ "ok": false, "site": t.site, "error": e.to_string(), "next": format!("ask the user to run: api-anything login {}", t.site) }), true)),
+                    Err(e) => {
+                        return Ok(reply(
+                            json!({ "ok": false, "site": t.site, "error": e.to_string(), "next": format!("ask the user to run: api-anything login {}", t.site) }),
+                            true,
+                        ));
+                    }
                 };
                 let Some(imported) = imported else {
-                    return Ok(reply(json!({ "ok": false, "site": t.site, "error": format!("no signed-in session in {source}"), "next": format!("ask the user to run: api-anything login {}", t.site) }), true));
+                    return Ok(reply(
+                        json!({ "ok": false, "site": t.site, "error": format!("no signed-in session in {source}"), "next": format!("ask the user to run: api-anything login {}", t.site) }),
+                        true,
+                    ));
                 };
                 let mut v = json!({ "ok": true, "site": t.site, "source": imported.source, "profile": format!("{}/{}", imported.browser, imported.profile) });
                 if let Some(n) = &imported.name {
@@ -296,7 +325,9 @@ pub async fn serve_stdio(allow_writes: bool) -> anyhow::Result<()> {
             "initialize" => {
                 let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or(PROTOCOL);
                 let version = if ["2024-11-05", "2025-03-26", "2025-06-18"].contains(&asked) { asked } else { PROTOCOL };
-                Ok(json!({ "protocolVersion": version, "capabilities": { "tools": {} }, "serverInfo": { "name": "api-anything", "version": VERSION }, "instructions": server.instructions() }))
+                Ok(
+                    json!({ "protocolVersion": version, "capabilities": { "tools": {} }, "serverInfo": { "name": "api-anything", "version": VERSION }, "instructions": server.instructions() }),
+                )
             }
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": server.tools() })),

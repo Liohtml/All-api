@@ -14,7 +14,8 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use url::Url;
 
-const MAC_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+const MAC_UA: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const SEC_CH_UA: &str = r#""Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140""#;
 
 static HOME: LazyLock<Home> = LazyLock::new(Home::new);
@@ -92,7 +93,14 @@ fn hget(h: &Headers, name: &str) -> String {
 
 #[test]
 fn round_trip_unicode_emoji_rtl_spaces_and_url_special_chars_in_query_path_form_and_json() {
-    let tricky = vec!["café ☕ 🚀".to_string(), "مرحبا بالعالم".into(), "a&b=c#d%e+f".into(), "say \"hi\" 'there'".into(), "x".repeat(5000), "a/b?c".into()];
+    let tricky = vec![
+        "café ☕ 🚀".to_string(),
+        "مرحبا بالعالم".into(),
+        "a&b=c#d%e+f".into(),
+        "say \"hi\" 'there'".into(),
+        "x".repeat(5000),
+        "a/b?c".into(),
+    ];
     let e = xhr(
         "POST",
         "https://site.test/api/users/nasa/search?q=nasa&x=1",
@@ -123,13 +131,19 @@ fn case_difference_example_nasa_locates_the_sent_nasa_and_the_callers_case_is_se
 
 #[test]
 fn substring_template_keeps_surrounding_text_and_the_args_special_chars_x_search_style() {
-    let op = learn(vec![get(&format!("https://site.test/api/search?q={}", enc("from:nasa lang:en {x}")))], vec![json!({"query": "nasa"})]).operation;
+    let op = learn(vec![get(&format!("https://site.test/api/search?q={}", enc("from:nasa lang:en {x}")))], vec![json!({"query": "nasa"})])
+        .operation;
     assert_eq!(q(&built(&op, json!({"query": "a&b {c} 🚀"})), "q").as_deref(), Some("from:a&b {c} 🚀 lang:en {x}"));
 }
 
 #[test]
 fn the_same_value_in_url_and_body_both_filled_warned() {
-    let e = xhr("POST", "https://site.test/api/search?q=nasa", &[("content-type", "application/json")], Some(&json!({"query": "nasa", "page": 1}).to_string()));
+    let e = xhr(
+        "POST",
+        "https://site.test/api/search?q=nasa",
+        &[("content-type", "application/json")],
+        Some(&json!({"query": "nasa", "page": 1}).to_string()),
+    );
     let learned = learn(vec![e], vec![json!({"q": "nasa"})]);
     let r = built(&learned.operation, json!({"q": "mars"}));
     assert_eq!(q(&r, "q").as_deref(), Some("mars"));
@@ -139,7 +153,12 @@ fn the_same_value_in_url_and_body_both_filled_warned() {
 
 #[test]
 fn text_plain_json_body_is_walked_as_json_numeric_json_leaf_gets_type_number_and_native_encoding() {
-    let e = xhr("POST", "https://site.test/api/items", &[("content-type", "text/plain;charset=UTF-8")], Some(r#"{"id":1840000000000000001,"q":"rover"}"#));
+    let e = xhr(
+        "POST",
+        "https://site.test/api/items",
+        &[("content-type", "text/plain;charset=UTF-8")],
+        Some(r#"{"id":1840000000000000001,"q":"rover"}"#),
+    );
     let op = learn(vec![e], vec![json!({"id": "1840000000000000001", "q": "rover"})]).operation;
     assert_eq!(op.params.iter().find(|p| p.name == "id").unwrap().kind.name(), "number");
     let r = built(&op, json!({"id": "1840000000000000999", "q": "lander"}));
@@ -149,7 +168,9 @@ fn text_plain_json_body_is_walked_as_json_numeric_json_leaf_gets_type_number_and
 #[test]
 fn multipart_form_data_body_the_values_part_is_templated_boundary_kept() {
     let b = "----WebKitFormBoundaryAbC123";
-    let body = format!("--{b}\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\nnasa\r\n--{b}\r\nContent-Disposition: form-data; name=\"n\"\r\n\r\n10\r\n--{b}--\r\n");
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\nnasa\r\n--{b}\r\nContent-Disposition: form-data; name=\"n\"\r\n\r\n10\r\n--{b}--\r\n"
+    );
     let ct = format!("multipart/form-data; boundary={b}");
     let e = xhr("POST", "https://site.test/api/upload", &[("content-type", &ct)], Some(&body));
     let op = learn(vec![e], vec![json!({"q": "nasa"})]).operation;
@@ -202,7 +223,10 @@ fn laravel_angular_xsrf_header_mirrors_the_url_decoded_cookie_cookie_ref_with_ur
     c.secure = true;
     i.cookies = vec![c];
     let op = learn_operation(&i).unwrap().operation;
-    assert_eq!(j(op.slots.iter().find(|s| s.is_ref()).unwrap()), json!({"ref": "cookie:XSRF-TOKEN", "transform": "url-decode", "at": ["header:x-xsrf-token"]}));
+    assert_eq!(
+        j(op.slots.iter().find(|s| s.is_ref()).unwrap()),
+        json!({"ref": "cookie:XSRF-TOKEN", "transform": "url-decode", "at": ["header:x-xsrf-token"]})
+    );
     assert_eq!(op.request.headers["x-xsrf-token"], "");
 }
 
@@ -220,7 +244,8 @@ fn match_picks_the_right_one_among_near_duplicate_requests_autocomplete_vs_searc
         &json!({"s": [{"x": "nasa"}, {"x": "nasa tv"}, {"x": "nasa live"}, {"x": "nasa jobs"}]}).to_string(),
         "application/json",
     );
-    let search = xhr_res("GET", "https://site.test/api/search?q=nasa", &[], None, &json!({"r": [{"id": 1}]}).to_string(), "application/json");
+    let search =
+        xhr_res("GET", "https://site.test/api/search?q=nasa", &[], None, &json!({"r": [{"id": 1}]}).to_string(), "application/json");
     let mut i = input(vec![suggest, search], vec![json!({"q": "nasa"})]);
     i.matcher = Some(m(json!({"path": "/api/search"})));
     let op = learn_operation(&i).unwrap().operation;
@@ -232,7 +257,10 @@ fn match_picks_the_right_one_among_near_duplicate_requests_autocomplete_vs_searc
 #[test]
 fn a_value_found_only_in_the_referer_header_is_not_in_the_request_would_silently_return_the_examples_data() {
     // GitHub-style owner/repo spans two path segments; the only single leaf holding it is the Referer.
-    let e = get_with("https://api.site.test/repos/facebook/react", &[("referer", "https://site.test/facebook/react"), ("accept", "application/json")]);
+    let e = get_with(
+        "https://api.site.test/repos/facebook/react",
+        &[("referer", "https://site.test/facebook/react"), ("accept", "application/json")],
+    );
     let mut i = input(vec![e], vec![json!({"repo": "facebook/react"})]);
     i.matcher = Some(m(json!({"path": "/repos/*/*"})));
     let err = learn_err(&i);
@@ -241,7 +269,10 @@ fn a_value_found_only_in_the_referer_header_is_not_in_the_request_would_silently
 
 #[test]
 fn a_subdomain_arg_found_only_in_origin_referer_is_not_in_the_request() {
-    let e = get_with("https://api.tumblr.test/v2/blog/info", &[("origin", "https://nasa.tumblr.test"), ("referer", "https://nasa.tumblr.test/")]);
+    let e = get_with(
+        "https://api.tumblr.test/v2/blog/info",
+        &[("origin", "https://nasa.tumblr.test"), ("referer", "https://nasa.tumblr.test/")],
+    );
     let mut i = input(vec![e.clone()], vec![json!({"blog": "nasa"})]);
     i.id = Some(e.id);
     let err = learn_err(&i);
@@ -250,7 +281,10 @@ fn a_subdomain_arg_found_only_in_origin_referer_is_not_in_the_request() {
 
 #[test]
 fn an_example_value_inside_the_user_agent_sec_ch_ua_does_not_template_those_headers() {
-    let e = get_with("https://shop.test/api/search?q=apple", &[("user-agent", MAC_UA), ("sec-ch-ua", SEC_CH_UA), ("accept", "application/json")]);
+    let e = get_with(
+        "https://shop.test/api/search?q=apple",
+        &[("user-agent", MAC_UA), ("sec-ch-ua", SEC_CH_UA), ("accept", "application/json")],
+    );
     let op = learn(vec![e], vec![json!({"q": "apple"})]).operation;
     let r = built(&op, json!({"q": "pear"}));
     assert_eq!(q(&r, "q").as_deref(), Some("pear"));
@@ -263,7 +297,12 @@ fn an_example_value_inside_the_user_agent_sec_ch_ua_does_not_template_those_head
 
 #[test]
 fn a_3_letter_example_like_app_does_not_rewrite_accept_content_type() {
-    let e = xhr("POST", "https://site.test/api/search", &[("accept", "application/json"), ("content-type", "application/json")], Some(r#"{"q":"app"}"#));
+    let e = xhr(
+        "POST",
+        "https://site.test/api/search",
+        &[("accept", "application/json"), ("content-type", "application/json")],
+        Some(r#"{"q":"app"}"#),
+    );
     let r = built(&learn(vec![e], vec![json!({"q": "app"})]).operation, json!({"q": "shoes"}));
     assert_eq!(r.body.as_deref(), Some(r#"{"q":"shoes"}"#));
     assert_eq!(r.headers["content-type"], "application/json");
@@ -272,7 +311,12 @@ fn a_3_letter_example_like_app_does_not_rewrite_accept_content_type() {
 
 #[test]
 fn a_numeric_example_does_not_template_digits_inside_unrelated_numbers_timestamps_nor_retype_them() {
-    let e = xhr("POST", "https://site.test/api/list?_=1727380100123", &[("content-type", "application/json")], Some(r#"{"limit":100,"since":1727380100456}"#));
+    let e = xhr(
+        "POST",
+        "https://site.test/api/list?_=1727380100123",
+        &[("content-type", "application/json")],
+        Some(r#"{"limit":100,"since":1727380100456}"#),
+    );
     let op = learn(vec![e], vec![json!({"limit": "100"})]).operation;
     let r = built(&op, json!({"limit": "20"}));
     assert_eq!(r.body.as_deref(), Some(r#"{"limit":20,"since":1727380100456}"#));
@@ -296,7 +340,11 @@ fn a_boolean_example_true_binds_to_its_own_leaf_not_every_true_flag_in_the_reque
 
 #[test]
 fn one_example_value_inside_anothers_leaf_the_exact_leaf_keeps_its_own_param() {
-    let op = learn(vec![get("https://site.test/api/search?q=new+york+pizza&city=new+york")], vec![json!({"q": "new york pizza", "city": "new york"})]).operation;
+    let op = learn(
+        vec![get("https://site.test/api/search?q=new+york+pizza&city=new+york")],
+        vec![json!({"q": "new york pizza", "city": "new york"})],
+    )
+    .operation;
     let r = built(&op, json!({"q": "tacos", "city": "boston"}));
     assert_eq!(q(&r, "city").as_deref(), Some("boston"));
     assert_eq!(q(&r, "q").as_deref(), Some("tacos"));
@@ -304,7 +352,11 @@ fn one_example_value_inside_anothers_leaf_the_exact_leaf_keeps_its_own_param() {
 
 #[test]
 fn two_params_sharing_a_prefix_inside_one_leaf_are_both_templated() {
-    let op = learn(vec![get(&format!("https://site.test/api/search?q={}", enc("from:nasa to:nasagov")))], vec![json!({"from": "nasa", "to": "nasagov"})]).operation;
+    let op = learn(
+        vec![get(&format!("https://site.test/api/search?q={}", enc("from:nasa to:nasagov")))],
+        vec![json!({"from": "nasa", "to": "nasagov"})],
+    )
+    .operation;
     assert_eq!(q(&built(&op, json!({"from": "esa", "to": "spacex"})), "q").as_deref(), Some("from:esa to:spacex"));
 }
 
@@ -317,7 +369,8 @@ fn the_same_numeric_value_as_a_json_string_and_a_json_number_keeps_each_leafs_ow
 
 #[test]
 fn a_url_carried_inside_a_query_param_keeps_its_own_encoding_layer_arg_with_and_equals() {
-    let op = learn(vec![get(&format!("https://site.test/api/go?next={}", enc("/search?q=nasa&page=1")))], vec![json!({"q": "nasa"})]).operation;
+    let op =
+        learn(vec![get(&format!("https://site.test/api/go?next={}", enc("/search?q=nasa&page=1")))], vec![json!({"q": "nasa"})]).operation;
     let next = q(&built(&op, json!({"q": "a&page=9"})), "next").unwrap();
     let inner = Url::parse("https://site.test").unwrap().join(&next).unwrap();
     assert_eq!(inner.query_pairs().find(|(k, _)| k == "q").map(|(_, v)| v.into_owned()).as_deref(), Some("a&page=9"));
@@ -326,7 +379,12 @@ fn a_url_carried_inside_a_query_param_keeps_its_own_encoding_layer_arg_with_and_
 
 #[test]
 fn an_inline_graphql_string_literal_escapes_quotes_in_the_arg() {
-    let e = xhr("POST", "https://site.test/graphql", &[("content-type", "application/json")], Some(&json!({"query": "{ search(q: \"nasa\") { id } }"}).to_string()));
+    let e = xhr(
+        "POST",
+        "https://site.test/graphql",
+        &[("content-type", "application/json")],
+        Some(&json!({"query": "{ search(q: \"nasa\") { id } }"}).to_string()),
+    );
     let op = learn(vec![e], vec![json!({"q": "nasa"})]).operation;
     let body: Value = serde_json::from_str(built(&op, json!({"q": "say \"hi\""})).body.as_ref().unwrap()).unwrap();
     assert_eq!(body["query"], json!("{ search(q: \"say \\\"hi\\\"\") { id } }"));
@@ -355,18 +413,40 @@ fn base64_encoded_json_in_a_query_param_is_a_decoded_layer() {
 #[test]
 fn batched_graphql_array_body_gets_an_operation_name_in_its_match_so_it_does_not_match_other_graphql_ops() {
     let body = |op: &str, v: Value| json!([{"operationName": op, "variables": v, "query": format!("query {op} {{ x }}")}]).to_string();
-    let e = xhr("POST", "https://site.test/graphql", &[("content-type", "application/json")], Some(&body("SearchProducts", json!({"q": "nasa"}))));
+    let e = xhr(
+        "POST",
+        "https://site.test/graphql",
+        &[("content-type", "application/json")],
+        Some(&body("SearchProducts", json!({"q": "nasa"}))),
+    );
     let op = learn(vec![e], vec![json!({"q": "nasa"})]).operation;
-    let other = Request { method: "POST".into(), url: "https://site.test/graphql".into(), headers: Headers::new(), body: Some(body("CartCount", json!({}))) };
+    let other = Request {
+        method: "POST".into(),
+        url: "https://site.test/graphql".into(),
+        headers: Headers::new(),
+        body: Some(body("CartCount", json!({}))),
+    };
     assert!(!matches(&op.matcher, &other), "match {} also accepts CartCount", j(&op.matcher));
 }
 
 #[test]
 fn graphql_post_without_operation_name_field_match_uses_the_querys_operation_name() {
-    let body = |name: &str, v: Value| json!({"query": format!("query {name}($q: String) {{ search(q: $q) {{ id }} }}"), "variables": v}).to_string();
-    let e = xhr("POST", "https://site.test/graphql", &[("content-type", "application/json")], Some(&body("SearchProducts", json!({"q": "nasa"}))));
+    let body = |name: &str, v: Value| {
+        json!({"query": format!("query {name}($q: String) {{ search(q: $q) {{ id }} }}"), "variables": v}).to_string()
+    };
+    let e = xhr(
+        "POST",
+        "https://site.test/graphql",
+        &[("content-type", "application/json")],
+        Some(&body("SearchProducts", json!({"q": "nasa"}))),
+    );
     let op = learn(vec![e], vec![json!({"q": "nasa"})]).operation;
-    let other = Request { method: "POST".into(), url: "https://site.test/graphql".into(), headers: Headers::new(), body: Some(body("CartCount", json!({}))) };
+    let other = Request {
+        method: "POST".into(),
+        url: "https://site.test/graphql".into(),
+        headers: Headers::new(),
+        body: Some(body("CartCount", json!({}))),
+    };
     assert!(!matches(&op.matcher, &other), "match {} also accepts CartCount", j(&op.matcher));
 }
 
@@ -377,7 +457,10 @@ fn codec_walk_get_at_set_at_agree_for_every_leaf_of_a_mixed_request() {
     let req = Request {
         method: "POST".into(),
         url: "https://site.test/a/b%20c/d?x=1&y=%7B%22k%22%3A%5B1%2C%22v%22%5D%7D&z=".into(),
-        headers: [("content-type", "application/x-www-form-urlencoded"), ("x-a", "h")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        headers: [("content-type", "application/x-www-form-urlencoded"), ("x-a", "h")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         body: Some("f=%5B%22a%22%2C%7B%22b%22%3A%22c%22%7D%5D&g=2".into()),
     };
     for leaf in walk(&req) {
@@ -420,7 +503,14 @@ fn bundled_google_flights_spec_a_non_latin_1_city_goes_into_the_referer_percent_
 
 #[test]
 fn a_json_api_whose_path_ends_in_js_github_vercel_next_js_npm_chart_js_is_not_dropped_as_an_asset() {
-    let e = xhr_res("GET", "https://api.github.test/repos/vercel/next.js", &[], None, &json!({"full_name": "vercel/next.js", "stargazers_count": 1}).to_string(), "application/json");
+    let e = xhr_res(
+        "GET",
+        "https://api.github.test/repos/vercel/next.js",
+        &[],
+        None,
+        &json!({"full_name": "vercel/next.js", "stargazers_count": 1}).to_string(),
+        "application/json",
+    );
     let mut i = input(vec![e], vec![json!({"repo": "next.js"})]);
     i.matcher = Some(m(json!({"path": "/repos/vercel/*"})));
     let op = learn_operation(&i).unwrap().operation;
@@ -429,8 +519,23 @@ fn a_json_api_whose_path_ends_in_js_github_vercel_next_js_npm_chart_js_is_not_dr
 
 #[test]
 fn a_path_segment_that_carries_the_arg_as_a_substring_handle_is_wildcarded_in_match_passes() {
-    let run = |h: &str| vec![xhr_res("GET", &format!("https://site.test/api/users/@{h}/profile.json"), &[], None, &json!({"user": {"name": h}}).to_string(), "application/json")];
-    let mut i = LearnInput::new(run("nasa"), vec![args(json!({"handle": "nasa"})), args(json!({"handle": "spacex"}))], "op", trigger("https://site.test/@{handle}"), true);
+    let run = |h: &str| {
+        vec![xhr_res(
+            "GET",
+            &format!("https://site.test/api/users/@{h}/profile.json"),
+            &[],
+            None,
+            &json!({"user": {"name": h}}).to_string(),
+            "application/json",
+        )]
+    };
+    let mut i = LearnInput::new(
+        run("nasa"),
+        vec![args(json!({"handle": "nasa"})), args(json!({"handle": "spacex"}))],
+        "op",
+        trigger("https://site.test/@{handle}"),
+        true,
+    );
     i.exchanges2 = Some(run("spacex"));
     let learned = learn_operation(&i).unwrap();
     assert_eq!(learned.operation.matcher.path.as_deref(), Some("/api/users/*/profile.json"));
@@ -440,7 +545,13 @@ fn a_path_segment_that_carries_the_arg_as_a_substring_handle_is_wildcarded_in_ma
 #[test]
 fn a_nonce_inside_a_templated_leaf_is_still_detected_by_the_two_run_diff_min_tier_3() {
     let run = |v: &str, sig: &str| vec![get(&format!("https://site.test/api/go?u={}", enc(&format!("/search?q={v}&sig={sig}"))))];
-    let mut i = LearnInput::new(run("nasa", "Zx81kPq0aB3dF7gH2jK9"), vec![args(json!({"q": "nasa"})), args(json!({"q": "spacex"}))], "op", trigger("https://site.test/?q={q}"), true);
+    let mut i = LearnInput::new(
+        run("nasa", "Zx81kPq0aB3dF7gH2jK9"),
+        vec![args(json!({"q": "nasa"})), args(json!({"q": "spacex"}))],
+        "op",
+        trigger("https://site.test/?q={q}"),
+        true,
+    );
     i.exchanges2 = Some(run("spacex", "Qm4nR7sT1uV5wX8yZ2aB"));
     assert_eq!(learn_operation(&i).unwrap().operation.min_tier, 3);
 }
@@ -448,14 +559,21 @@ fn a_nonce_inside_a_templated_leaf_is_still_detected_by_the_two_run_diff_min_tie
 #[test]
 fn control_a_nonce_in_its_own_leaf_is_detected_by_the_two_run_diff_passes() {
     let run = |v: &str, sig: &str| vec![get(&format!("https://site.test/api/search?q={v}&sig={sig}"))];
-    let mut i = LearnInput::new(run("nasa", "Zx81kPq0aB3dF7gH2jK9"), vec![args(json!({"q": "nasa"})), args(json!({"q": "spacex"}))], "op", trigger("https://site.test/?q={q}"), true);
+    let mut i = LearnInput::new(
+        run("nasa", "Zx81kPq0aB3dF7gH2jK9"),
+        vec![args(json!({"q": "nasa"})), args(json!({"q": "spacex"}))],
+        "op",
+        trigger("https://site.test/?q={q}"),
+        true,
+    );
     i.exchanges2 = Some(run("spacex", "Qm4nR7sT1uV5wX8yZ2aB"));
     assert_eq!(learn_operation(&i).unwrap().operation.min_tier, 3);
 }
 
 #[test]
 fn an_array_example_library_add_binds_to_the_json_array_leaf_with_type_array() {
-    let e = xhr("POST", "https://site.test/api/search", &[("content-type", "application/json")], Some(r#"{"tags":["nasa","mars"],"n":10}"#));
+    let e =
+        xhr("POST", "https://site.test/api/search", &[("content-type", "application/json")], Some(r#"{"tags":["nasa","mars"],"n":10}"#));
     let op = learn(vec![e], vec![json!({"tags": ["nasa", "mars"]})]).operation;
     assert_eq!(op.params[0].kind.name(), "array");
     assert_eq!(built(&op, json!({"tags": ["esa"]})).body.as_deref(), Some(r#"{"tags":["esa"],"n":10}"#));
@@ -486,13 +604,24 @@ fn metas_x_fb_lsd_header_same_token_as_the_lsd_form_field_which_is_refd_is_not_l
         Some(&format!("lsd={lsd}&fb_api_req_friendly_name=SearchQuery&variables={}", enc(r#"{"q":"nasa"}"#))),
     );
     let op = learn(vec![e], vec![json!({"q": "nasa"})]).operation;
-    assert_eq!(op.slots.iter().find(|s| s.ref_str() == "session:op/lsd").map(|s| s.at.clone()), Some(vec!["form:lsd".to_string()]), "control: the form field is a ref");
+    assert_eq!(
+        op.slots.iter().find(|s| s.ref_str() == "session:op/lsd").map(|s| s.at.clone()),
+        Some(vec!["form:lsd".to_string()]),
+        "control: the form field is a ref"
+    );
     assert!(!serde_json::to_string(&op).unwrap().contains(lsd), "x-fb-lsd header keeps the lsd token literally");
 }
 
 #[test]
 fn a_url_valued_example_link_preview_archive_lookup_locates_its_request() {
-    let e = xhr_res("GET", &format!("https://tool.test/api/preview?url={}", enc("https://example.com/page")), &[], None, &json!({"title": "x", "links": [1, 2]}).to_string(), "application/json");
+    let e = xhr_res(
+        "GET",
+        &format!("https://tool.test/api/preview?url={}", enc("https://example.com/page")),
+        &[],
+        None,
+        &json!({"title": "x", "links": [1, 2]}).to_string(),
+        "application/json",
+    );
     let mut doc = xhr_res("GET", "https://tool.test/?u=https://example.com/page", &[], None, "<html></html>", "text/html");
     doc.resource_type = "document".into();
     let op = learn(vec![doc, e], vec![json!({"url": "https://example.com/page"})]).operation;

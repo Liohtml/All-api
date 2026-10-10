@@ -4,7 +4,9 @@ use crate::learn::{bare_request, matches};
 use crate::session::{Session, cookie_header_for, cookie_value, parse_set_cookie};
 use crate::spec::{Escape, Match, Operation, Param, ParamType, Request, Slot, Transform};
 use crate::types::{Headers, StoredCookie};
-use crate::util::{as_text, decode_uri_component, encode_uri_component, json, json_escape, now_ms, number_from_text, parse_url, past_safe_integer, re};
+use crate::util::{
+    as_text, decode_uri_component, encode_uri_component, json, json_escape, now_ms, number_from_text, parse_url, past_safe_integer, re,
+};
 use anyhow::{Result, anyhow, bail};
 use futures_util::future::BoxFuture;
 use indexmap::IndexMap;
@@ -116,9 +118,7 @@ impl Fetcher for ReqwestFetcher {
             if let Some(b) = req.body {
                 r = r.body(b);
             }
-            let res = r.send().await.map_err(|e| {
-                if e.is_timeout() { anyhow!("__timeout__") } else { anyhow!("{}", name_cause(&e)) }
-            })?;
+            let res = r.send().await.map_err(|e| if e.is_timeout() { anyhow!("__timeout__") } else { anyhow!("{}", name_cause(&e)) })?;
             let status = res.status().as_u16();
             let url = res.url().to_string();
             let mut headers = Headers::new();
@@ -139,7 +139,11 @@ impl Fetcher for ReqwestFetcher {
                     }
                 }
             }
-            let body = res.bytes().await.map_err(|e| if e.is_timeout() { anyhow!("__timeout__") } else { anyhow!("{}", name_cause(&e)) })?.to_vec();
+            let body = res
+                .bytes()
+                .await
+                .map_err(|e| if e.is_timeout() { anyhow!("__timeout__") } else { anyhow!("{}", name_cause(&e)) })?
+                .to_vec();
             Ok(HttpResponse { status, headers, set_cookie, body, url })
         })
     }
@@ -234,7 +238,11 @@ fn js_number(f: f64) -> String {
 pub fn resolve_ref(reference: &str, session: &Session, url: &str) -> Option<String> {
     let i = reference.find(':').map(|i| i + 1).unwrap_or(0);
     let name = &reference[i..];
-    if reference.starts_with("cookie:") { cookie_value(&session.cookies, name, Some(url), now_ms()) } else { session.values.get(name).cloned() }
+    if reference.starts_with("cookie:") {
+        cookie_value(&session.cookies, name, Some(url), now_ms())
+    } else {
+        session.values.get(name).cloned()
+    }
 }
 
 pub fn transform(v: &str, t: Option<Transform>) -> String {
@@ -288,7 +296,8 @@ pub fn build_request(op: &Operation, args: &Args, session: &Session) -> Result<R
         };
         let c = coerce(p, v)?;
         if let Some(pat) = &p.pattern {
-            let whole = crate::util::js_regex(&format!("^(?:{pat})$")).map_err(|e| anyhow!("param \"{}\" has a bad pattern: {e}", p.name))?;
+            let whole =
+                crate::util::js_regex(&format!("^(?:{pat})$")).map_err(|e| anyhow!("param \"{}\" has a bad pattern: {e}", p.name))?;
             if !whole.is_match(&as_text(&c)).unwrap_or(false) {
                 bail!(
                     "param \"{}\" must be {}, got {}",
@@ -301,7 +310,12 @@ pub fn build_request(op: &Operation, args: &Args, session: &Session) -> Result<R
         vals.insert(p.name.clone(), c);
     }
 
-    let mut req = Request { method: op.request.method.to_uppercase(), url: op.request.url.clone(), headers: op.request.headers.clone(), body: op.request.body.clone() };
+    let mut req = Request {
+        method: op.request.method.to_uppercase(),
+        url: op.request.url.clone(),
+        headers: op.request.headers.clone(),
+        body: op.request.body.clone(),
+    };
     let mut leaf_types: Option<HashMap<String, crate::codec::LeafType>> = None;
     req.headers.shift_remove("cookie");
     for slot in &op.slots {
@@ -324,7 +338,8 @@ pub fn build_request(op: &Operation, args: &Args, session: &Session) -> Result<R
         }
         if let Some(t) = &slot.template {
             // A Referer/Origin is a URL: specs learned before `escape` existed still get the arg percent-encoded.
-            let escape = slot.escape.or_else(|| if slot.is_param() && REFERER_OR_ORIGIN.is_match(&slot.at[0]) { Some(Escape::Url) } else { None });
+            let escape =
+                slot.escape.or_else(|| if slot.is_param() && REFERER_OR_ORIGIN.is_match(&slot.at[0]) { Some(Escape::Url) } else { None });
             let mut vars: Args = Args::new();
             for r in template_refs(t) {
                 vars.insert(r.clone(), Value::String(resolve_ref(&r, session, &op.request.url).unwrap_or_default()));
@@ -334,8 +349,13 @@ pub fn build_request(op: &Operation, args: &Args, session: &Session) -> Result<R
             }
             vars.insert(name.clone(), value);
             value = Value::String(fill_slot_template(t, &vars, escape));
-        } else if !value.is_string() && !value.is_object() && !value.is_array() && slot.at.last().map(|s| s.starts_with("json:")).unwrap_or(false) {
-            let types = leaf_types.get_or_insert_with(|| walk(&op.request).into_iter().map(|l| (crate::codec::step_key(&l.at), l.kind)).collect());
+        } else if !value.is_string()
+            && !value.is_object()
+            && !value.is_array()
+            && slot.at.last().map(|s| s.starts_with("json:")).unwrap_or(false)
+        {
+            let types =
+                leaf_types.get_or_insert_with(|| walk(&op.request).into_iter().map(|l| (crate::codec::step_key(&l.at), l.kind)).collect());
             // the same number can sit in a JSON string ("id":"12345") and a JSON number (ids:[12345]); each leaf keeps its type
             if types.get(&crate::codec::step_key(&slot.at)) == Some(&crate::codec::LeafType::String) {
                 value = Value::String(as_text(&value));
@@ -447,23 +467,41 @@ pub fn own_match(op: &Operation) -> Match {
 /// 303 after anything but a GET or HEAD, and 301/302 after a POST, make a bodiless GET. A write is
 /// sent once, so no redirect is taken that would send it again. On an origin change the credential
 /// headers go, and a hop that would still carry a session's value there is not taken.
-pub fn next_hop(op: &Operation, session: &Session, from: &Request, status: u16, location: &str, taken: usize, limit: usize) -> Result<Request> {
+pub fn next_hop(
+    op: &Operation,
+    session: &Session,
+    from: &Request,
+    status: u16,
+    location: &str,
+    taken: usize,
+    limit: usize,
+) -> Result<Request> {
     let base = parse_url(&from.url).ok_or_else(|| anyhow!("bad url {}", from.url))?;
     let next = base.join(location).map_err(|_| anyhow!("bad redirect location {location}"))?;
     let next_origin = crate::util::origin_of(&next);
     if taken >= limit {
-        return Err(RedirectRefused { message: format!("stopped after {limit} redirects, the last one to {next_origin}"), kind: Some(RefusalKind::Limit) }.into());
+        return Err(RedirectRefused {
+            message: format!("stopped after {limit} redirects, the last one to {next_origin}"),
+            kind: Some(RefusalKind::Limit),
+        }
+        .into());
     }
-    let refused = |why: &str| RedirectRefused { message: format!("not following the HTTP {status} redirect to {next_origin}: {why}"), kind: None };
+    let refused =
+        |why: &str| RedirectRefused { message: format!("not following the HTTP {status} redirect to {next_origin}: {why}"), kind: None };
     if next.scheme() != "http" && next.scheme() != "https" {
         return Err(refused("it is not an http(s) address").into());
     }
     // The Fetch standard's two cases; a GET stays what it was, headers and all.
-    let to_get = (status == 303 && from.method != "GET" && from.method != "HEAD") || ((status == 301 || status == 302) && from.method == "POST");
+    let to_get =
+        (status == 303 && from.method != "GET" && from.method != "HEAD") || ((status == 301 || status == 302) && from.method == "POST");
     let method = if to_get { "GET".to_string() } else { from.method.clone() };
     let carries_on = !to_get && from.method != "GET" && from.method != "HEAD";
     if !op.read_only && (carries_on || matches(&own_match(op), &bare_request(&method, next.as_str()))) {
-        return Err(RedirectRefused { message: format!("not following the HTTP {status} redirect to {next_origin}: it would send this write again"), kind: Some(RefusalKind::Again) }.into());
+        return Err(RedirectRefused {
+            message: format!("not following the HTTP {status} redirect to {next_origin}: it would send this write again"),
+            kind: Some(RefusalKind::Again),
+        }
+        .into());
     }
     let cross = next_origin != crate::util::origin_of(&base);
     // The slots that hold a cookie:/session: value, by the layer their path starts in ("header:x-csrf", "form[1]:tok").
@@ -498,16 +536,21 @@ pub fn next_hop(op: &Operation, session: &Session, from: &Request, status: u16, 
         let carried: Vec<String> = held
             .iter()
             .flat_map(|h| {
-                h.refs.iter().filter_map(|r| {
-                    let v = resolve_ref(r, session, &op.request.url)?;
-                    if v.len() >= 4 { Some(if h.s.ref_str() == r { transform(&v, h.s.transform) } else { v }) } else { None }
-                }).collect::<Vec<_>>()
+                h.refs
+                    .iter()
+                    .filter_map(|r| {
+                        let v = resolve_ref(r, session, &op.request.url)?;
+                        if v.len() >= 4 { Some(if h.s.ref_str() == r { transform(&v, h.s.transform) } else { v }) } else { None }
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
         // a search, not a proof: the address is percent- and form-decoded until nothing changes,
         // every reading kept, and the value looked for as it is, as a JSON string's contents, and in base64.
         static PCT: LazyLock<regex::Regex> = LazyLock::new(|| re(r"(?i)(%[0-9a-f]{2})+"));
-        let unpct = |u: &str| PCT.replace_all(u, |m: &regex::Captures| decode_uri_component(&m[0]).unwrap_or_else(|| m[0].to_string())).into_owned();
+        let unpct = |u: &str| {
+            PCT.replace_all(u, |m: &regex::Captures| decode_uri_component(&m[0]).unwrap_or_else(|| m[0].to_string())).into_owned()
+        };
         let mut readings: Vec<String> = vec![next.to_string()];
         let mut i = 0;
         while i < readings.len() && readings.len() <= 64 {
@@ -521,7 +564,13 @@ pub fn next_hop(op: &Operation, session: &Session, from: &Request, status: u16, 
         }
         let forms = |v: &str| {
             let j = json_escape(v);
-            vec![v.to_string(), j.clone(), j.replace('/', "\\/"), crate::util::b64_encode(v.as_bytes()).trim_end_matches('=').to_string(), crate::util::b64url_encode(v.as_bytes())]
+            vec![
+                v.to_string(),
+                j.clone(),
+                j.replace('/', "\\/"),
+                crate::util::b64_encode(v.as_bytes()).trim_end_matches('=').to_string(),
+                crate::util::b64url_encode(v.as_bytes()),
+            ]
         };
         if in_body || carried.iter().any(|v| forms(v).iter().any(|f| readings.iter().any(|u| u.contains(f.as_str())))) {
             return Err(refused("the request would carry this session's values to another origin").into());
