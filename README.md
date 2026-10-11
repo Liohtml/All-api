@@ -98,7 +98,7 @@ page returns, so you (or an agent) can choose. [Reference](docs/REFERENCE.md).
 
 ## What's included
 
-22 read operations across 9 sites, compiled into the binary:
+29 read operations across 10 sites, compiled into the binary:
 
 [![api-anything sites lists the bundled sites; api-anything ops goodreads lists an operation's parameters and fields](docs/media/sites.png)](docs/media/sites.png)
 
@@ -108,6 +108,7 @@ page returns, so you (or an agent) can choose. [Reference](docs/REFERENCE.md).
 - `x` and `instagram` profiles
 - search on `youtube`, `airbnb` and `amazon`
 - `linkedin`: profiles, companies and search, with your own login
+- `trustpilot`: business search, rating summary, review topics, and reviews page by page (all, or one star rating)
 
 They cover selected features, not whole sites. `api-anything ops <site>` lists each operation's
 parameters, fields and caveats. No write operations are bundled.
